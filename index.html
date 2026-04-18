@@ -800,7 +800,7 @@ function parseJwt(token){
   }catch(e){return null;}
 }
 
-async function handleCallback(){const code=new URLSearchParams(location.search).get('code');if(!code)return false;history.replaceState({},'',location.pathname);walletType=localStorage.getItem('ewr_wt')||'personal';showLoading('Authenticating...');try{const r=await fetch(SSO_TOKEN,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'authorization_code',code,redirect_uri:CB,client_id:CLIENT_ID,code_verifier:sessionStorage.getItem('pkce_v')})});const t=await r.json();if(!r.ok)throw new Error(t.error_description||'Auth failed');saveToken(t,TOKEN_KEY);return true;}catch(e){showToast(e.message,'error');hideLoading();return false;}}
+async function handleCallback(){const code=new URLSearchParams(location.search).get('code');if(!code)return false;history.replaceState({},'',location.pathname);walletType=localStorage.getItem('ewr_wt')||'personal';try{const r=await fetch(SSO_TOKEN,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'authorization_code',code,redirect_uri:CB,client_id:CLIENT_ID,code_verifier:sessionStorage.getItem('pkce_v')})});const t=await r.json();if(!r.ok)throw new Error(t.error_description||'Auth failed');saveToken(t,TOKEN_KEY);return true;}catch(e){showToast(e.message,'error');return false;}}
 function addCharacter(){
   // 진행 중인 백그라운드 갱신 중단 및 상태 초기화
   bgLoadAbort=true;
