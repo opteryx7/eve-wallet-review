@@ -2532,10 +2532,7 @@ async function initEnhanced(){
   loadLpPriceCache();
   initLpDefaults();
   startAutoRefresh();
-  if(isAdding){
-    await refreshCharAtIndex(myIdx,false,'add');
-    showToast(`Added ${charEntry.charName}`,'success');
-  }else if(shouldBlockInit||!hasCachedData){
+  if(isAdding||shouldBlockInit||!hasCachedData){
     await refreshAllChars(false,'init');
     showToast(`Loaded ${registeredChars.length} character(s)`,'success');
   }else{
