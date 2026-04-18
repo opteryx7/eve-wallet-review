@@ -2140,6 +2140,9 @@ function renderStandings(){
     [...availGroups].map(g=>`<button class="sub-tab ${g===grp?'active':''}" onclick="activeStandingFaction='${g}';renderStandings();">${FACTION_NAMES[g]||g}</button>`).join('');
 
   const tm=document.getElementById('table-standing');
+  tm.style.width='max-content';
+  tm.style.minWidth='unset';
+  tm.style.tableLayout='auto';
   const hasData=registeredChars.some((_,i)=>charDataCache[i]?.standings?.length>0);
   if(!hasData){
     tm.innerHTML='<tbody><tr><td colspan="20" class="empty">평판 데이터 없음 — 재로그인 후 데이터를 갱신해주세요 (새 scope 필요)</td></tr></tbody>';
@@ -2245,13 +2248,13 @@ function renderStandings(){
 
   // 헤더: 팩션 | 콥들 | 에이전트들
   const stAlign='left';
-  const corpThs=corpIds.map(cid=>`<th style="text-align:${stAlign};white-space:nowrap;">${corpNames[cid]||cid}</th>`).join('');
-  const agentThs=agentList.map(n=>`<th style="text-align:${stAlign};font-size:9px;color:var(--text3);max-width:60px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${n}">${n.split(' ')[0]}<br><span style="font-size:8px;">${n.split(' ').slice(1).join(' ')}</span></th>`).join('');
-  const charHeader=`<th>캐릭터</th>`;
+  const corpThs=corpIds.map(cid=>`<th style="text-align:${stAlign};white-space:nowrap;padding:9px 14px 9px 12px;">${corpNames[cid]||cid}</th>`).join('');
+  const agentThs=agentList.map(n=>`<th style="text-align:${stAlign};font-size:9px;color:var(--text3);max-width:60px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:9px 14px 9px 12px;" title="${n}">${n.split(' ')[0]}<br><span style="font-size:8px;">${n.split(' ').slice(1).join(' ')}</span></th>`).join('');
+  const charHeader=`<th style="text-align:left;padding:9px 14px 9px 12px;">캐릭터</th>`;
 
   const thead=`<thead><tr>
     ${charHeader}
-    <th style="text-align:${stAlign};">팩션</th>
+    <th style="text-align:${stAlign};padding:9px 14px 9px 12px;">팩션</th>
     ${corpThs}
     ${agentThs}
   </tr></thead>`;
@@ -2261,19 +2264,19 @@ function renderStandings(){
     .filter(({c})=>!(standingUi.hiddenChars||[]).includes(c.charId));
   const tbody=`<tbody>${visibleChars.map(({c,i})=>{
     const fv=getSt(i,factionId);
-    const charCell=`<td style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;">${c.charName}</td>`;
+    const charCell=`<td style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;padding:10px 14px 10px 12px;">${c.charName}</td>`;
     const corpCells=corpIds.map(cid=>{
       const v=getSt(i,cid);
-      return`<td style="text-align:${stAlign};font-weight:600;color:${stColor(v)};">${stFmt(v)}</td>`;
+      return`<td style="text-align:${stAlign};font-weight:600;color:${stColor(v)};padding:10px 14px 10px 12px;">${stFmt(v)}</td>`;
     }).join('');
     const agentCells=agentList.map(n=>{
       const id=agentNameToId[n];
       const v=id?getSt(i,id):null;
-      return`<td style="text-align:${stAlign};color:${stColor(v)};">${stFmt(v)}</td>`;
+      return`<td style="text-align:${stAlign};color:${stColor(v)};padding:10px 14px 10px 12px;">${stFmt(v)}</td>`;
     }).join('');
     return`<tr>
       ${charCell}
-      <td style="text-align:${stAlign};font-size:15px;font-weight:700;color:${stColor(fv)};">${stFmt(fv)}</td>
+      <td style="text-align:${stAlign};font-size:15px;font-weight:700;color:${stColor(fv)};padding:10px 14px 10px 12px;">${stFmt(fv)}</td>
       ${corpCells}
       ${agentCells}
     </tr>`;
@@ -2351,6 +2354,34 @@ async function refreshAllChars(silent=false,reason='manual'){
 }
 
 function manualRefresh(){refreshAllChars(false);}
+
+async function refreshCharAtIndex(idx,silent=false,reason='single'){
+  if(idx<0||idx>=registeredChars.length)return;
+  const c=registeredChars[idx];
+  const btn=document.getElementById('btn-refresh');
+  if(!silent&&btn){btn.disabled=true;btn.textContent='Refresh...';}
+  try{
+    silentRefresh=silent;
+    if(!silent)showLoading(reason==='add'?'Loading new character...':'Refreshing character...');
+    if(silent)setSyncStatus(`Background sync | ${c.charName}`);
+    const t=await getValidToken(idx);
+    if(!t)return;
+    charDataCache[idx]=await loadCharData(idx,t);
+    saveCharSnapshot(idx,charDataCache[idx]);
+    lastSyncAt=Date.now();
+    renderAll();
+    if(document.getElementById('page-standing').style.display!=='none')renderStandings();
+  }catch(e){
+    console.error('Refresh single char',idx,e.message);
+    if(!charDataCache[idx])charDataCache[idx]=loadCachedCharData(idx);
+  }finally{
+    silentRefresh=false;
+    setSyncStatus('');
+    updateRefreshInfo();
+    if(!silent)hideLoading();
+    if(!silent&&btn){btn.disabled=false;btn.textContent='Refresh';}
+  }
+}
 
 function startAutoRefresh(){
   if(autoRefreshInterval)clearInterval(autoRefreshInterval);
@@ -2464,7 +2495,7 @@ async function initEnhanced(){
     return;
   }
   const existingIdx=registeredChars.findIndex(c=>c.charId===charInfo.CharacterID);
-  const shouldBlockInit=!!code||isAdding;
+  const shouldBlockInit=!!code;
   let corpId=existingIdx>=0?registeredChars[existingIdx].corpId:null;
   if(walletType==='corp'&&(corpId===null||corpId===undefined||shouldBlockInit)){
     if(shouldBlockInit)showLoading('Fetching character info...');
@@ -2501,7 +2532,10 @@ async function initEnhanced(){
   loadLpPriceCache();
   initLpDefaults();
   startAutoRefresh();
-  if(shouldBlockInit||!hasCachedData){
+  if(isAdding){
+    await refreshCharAtIndex(myIdx,false,'add');
+    showToast(`Added ${charEntry.charName}`,'success');
+  }else if(shouldBlockInit||!hasCachedData){
     await refreshAllChars(false,'init');
     showToast(`Loaded ${registeredChars.length} character(s)`,'success');
   }else{
