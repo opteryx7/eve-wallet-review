@@ -272,9 +272,10 @@ main{max-width:1440px;margin:0 auto;padding:1.5rem 2rem;}
   <!-- ── STANDING ── -->
   <div id="page-standing" style="display:none;">
     <div class="sub-tabs" id="standing-faction-tabs" style="margin-bottom:1rem;"></div>
-    <div style="display:flex;justify-content:flex-end;margin:-.25rem 0 1rem;">
-      <button class="btn-sm" id="btn-standing-chars" onclick="toggleStandingChars()">Hide Characters</button>
+    <div style="display:flex;justify-content:flex-end;margin:-.25rem 0 .5rem;">
+      <button class="btn-sm" id="btn-standing-chars" onclick="toggleStandingChars()">Character Filter</button>
     </div>
+    <div id="standing-char-filters" style="display:none;margin-bottom:1rem;"></div>
     <div class="panel" style="margin-bottom:1rem;">
       <div class="ph" style="cursor:pointer;" onclick="toggleStandingSettings()">
         <span class="pt">에이전트 설정</span>
@@ -484,13 +485,14 @@ const FACTION_NAMES={guristas:"Guristas Pirates",sansha:"Sansha's Nation",blood:
 const STANDING_AGENT_KEY='ewr_standing_agents';
 const STANDING_UI_KEY='ewr_standing_ui';
 let standingAgentSettings={}; // grp->{order:[name,...],hidden:[name,...]}
-let standingUi={hideChars:false};
+let standingUi={showCharFilters:false,hiddenChars:[]};
 let activeStandingFaction=null;
 let dragSrcIdx=null;
+let charDragSrcIdx=null;
 
 function loadStandingAgentSettings(){try{standingAgentSettings=JSON.parse(localStorage.getItem(STANDING_AGENT_KEY)||'{}');}catch(e){}}
 function saveStandingAgentSettings(){localStorage.setItem(STANDING_AGENT_KEY,JSON.stringify(standingAgentSettings));}
-function loadStandingUiSettings(){try{standingUi={hideChars:false,...JSON.parse(localStorage.getItem(STANDING_UI_KEY)||'{}')};}catch(e){standingUi={hideChars:false};}}
+function loadStandingUiSettings(){try{standingUi={showCharFilters:false,hiddenChars:[],...JSON.parse(localStorage.getItem(STANDING_UI_KEY)||'{}')};}catch(e){standingUi={showCharFilters:false,hiddenChars:[]};}}
 function saveStandingUiSettings(){localStorage.setItem(STANDING_UI_KEY,JSON.stringify(standingUi));}
 function toggleStandingSettings(){
   const el=document.getElementById('standing-agent-settings');
@@ -500,10 +502,33 @@ function toggleStandingSettings(){
   if(lbl)lbl.textContent=show?'▲ 접기':'▼ 설정';
 }
 function toggleStandingChars(){
-  standingUi.hideChars=!standingUi.hideChars;
+  standingUi.showCharFilters=!standingUi.showCharFilters;
   saveStandingUiSettings();
   renderStandings();
 }
+function toggleStandingCharVisible(charId){
+  const hidden=new Set(standingUi.hiddenChars||[]);
+  if(hidden.has(charId))hidden.delete(charId);else hidden.add(charId);
+  standingUi.hiddenChars=[...hidden];
+  saveStandingUiSettings();
+  renderStandings();
+}
+function onCharDragStart(e,idx){
+  charDragSrcIdx=idx;
+  e.dataTransfer.effectAllowed='move';
+}
+function onCharDragOver(e){
+  e.preventDefault();
+  e.dataTransfer.dropEffect='move';
+}
+function onCharDrop(e,idx){
+  e.preventDefault();
+  e.stopPropagation();
+  if(charDragSrcIdx===null||charDragSrcIdx===idx)return;
+  reorderCharacters(charDragSrcIdx,idx);
+  charDragSrcIdx=null;
+}
+function onCharDragEnd(){charDragSrcIdx=null;}
 function onAgentDragStart(e,idx){dragSrcIdx=idx;e.dataTransfer.effectAllowed='move';}
 function onAgentDragOver(e){e.preventDefault();e.dataTransfer.dropEffect='move';}
 function onAgentDrop(e,grp,idx){
@@ -1795,12 +1820,16 @@ function renderOverviewCharts(){
 // ── CHAR LIST ──
 function renderCharList(){
   document.getElementById('char-list').innerHTML=registeredChars.map((c,i)=>`
-    <div style="display:flex;align-items:center;gap:6px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:5px 10px;">
+    <div draggable="true"
+      ondragstart="onCharDragStart(event,${i})"
+      ondragover="onCharDragOver(event)"
+      ondrop="onCharDrop(event,${i})"
+      ondragend="onCharDragEnd()"
+      style="display:flex;align-items:center;gap:6px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:5px 10px;cursor:grab;user-select:none;">
       <img src="https://images.evetech.net/characters/${c.charId}/portrait?size=32" style="width:22px;height:22px;border-radius:50%;" onerror="this.style.display='none'">
       <span style="font-size:12px;color:var(--text2)">${c.charName}</span>
       ${c.walletType==='corp'?`<span style="font-size:9px;color:var(--text3);font-family:'Noto Sans KR',sans-serif">CORP</span>`:''}
-      ${registeredChars.length>1?`<span onclick="moveChar(${i},-1)" style="color:${i===0?'var(--text3)':'var(--accent)'};font-size:11px;cursor:${i===0?'default':'pointer'};margin-left:4px;">Up</span>`:''}
-      ${registeredChars.length>1?`<span onclick="moveChar(${i},1)" style="color:${i===registeredChars.length-1?'var(--text3)':'var(--accent)'};font-size:11px;cursor:${i===registeredChars.length-1?'default':'pointer'};">Dn</span>`:''}
+      ${registeredChars.length>1?`<span style="color:var(--text3);font-size:11px;margin-left:4px;">Drag</span>`:''}
       ${registeredChars.length>1?`<span onclick="removeChar(${i})" style="color:var(--text3);font-size:13px;cursor:pointer;margin-left:2px;">×</span>`:''}
     </div>`).join('');
 
@@ -1833,12 +1862,11 @@ function persistCharacterState(nextChars,nextData,nextTokens){
   updateStorageStatus();
 }
 
-function moveChar(idx,delta){
-  const target=idx+delta;
-  if(target<0||target>=registeredChars.length)return;
+function reorderCharacters(fromIdx,targetIdx){
+  if(fromIdx<0||targetIdx<0||fromIdx>=registeredChars.length||targetIdx>=registeredChars.length||fromIdx===targetIdx)return;
   const nextChars=[...registeredChars];
-  const [moved]=nextChars.splice(idx,1);
-  nextChars.splice(target,0,moved);
+  const [moved]=nextChars.splice(fromIdx,1);
+  nextChars.splice(targetIdx,0,moved);
   const nextData={};
   const nextTokens={};
   nextChars.forEach((char,newIdx)=>{
@@ -2078,7 +2106,20 @@ function renderStandings(){
   if(!activeStandingFaction)activeStandingFaction=getMainFactionGroup();
   const grp=activeStandingFaction;
   const charBtn=document.getElementById('btn-standing-chars');
-  if(charBtn)charBtn.textContent=standingUi.hideChars?'Show Characters':'Hide Characters';
+  if(charBtn)charBtn.textContent=standingUi.showCharFilters?'Close Character Filter':'Character Filter';
+  const charFilterEl=document.getElementById('standing-char-filters');
+  if(charFilterEl){
+    charFilterEl.style.display=standingUi.showCharFilters?'':'none';
+    charFilterEl.innerHTML=`<div style="display:flex;flex-wrap:wrap;gap:6px;">${
+      registeredChars.map(c=>{
+        const hidden=(standingUi.hiddenChars||[]).includes(c.charId);
+        return `<label style="display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;${hidden?'opacity:.5':''}">
+          <input type="checkbox" ${hidden?'':'checked'} onchange="toggleStandingCharVisible(${c.charId})">
+          <span style="font-size:12px;color:var(--text);">${c.charName}</span>
+        </label>`;
+      }).join('')
+    }</div>`;
+  }
 
   // 팩션 탭: LP + standings 데이터에서 감지, 둘 다 없으면 전체 표시
   const availGroups=new Set();
@@ -2206,7 +2247,7 @@ function renderStandings(){
   const stAlign='left';
   const corpThs=corpIds.map(cid=>`<th style="text-align:${stAlign};white-space:nowrap;">${corpNames[cid]||cid}</th>`).join('');
   const agentThs=agentList.map(n=>`<th style="text-align:${stAlign};font-size:9px;color:var(--text3);max-width:60px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${n}">${n.split(' ')[0]}<br><span style="font-size:8px;">${n.split(' ').slice(1).join(' ')}</span></th>`).join('');
-  const charHeader=standingUi.hideChars?'':`<th>캐릭터</th>`;
+  const charHeader=`<th>캐릭터</th>`;
 
   const thead=`<thead><tr>
     ${charHeader}
@@ -2215,9 +2256,12 @@ function renderStandings(){
     ${agentThs}
   </tr></thead>`;
 
-  const tbody=`<tbody>${registeredChars.map((c,i)=>{
+  const visibleChars=registeredChars
+    .map((c,i)=>({c,i}))
+    .filter(({c})=>!(standingUi.hiddenChars||[]).includes(c.charId));
+  const tbody=`<tbody>${visibleChars.map(({c,i})=>{
     const fv=getSt(i,factionId);
-    const charCell=standingUi.hideChars?'':`<td style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;">${c.charName}</td>`;
+    const charCell=`<td style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;">${c.charName}</td>`;
     const corpCells=corpIds.map(cid=>{
       const v=getSt(i,cid);
       return`<td style="text-align:${stAlign};font-weight:600;color:${stColor(v)};">${stFmt(v)}</td>`;
@@ -2233,7 +2277,7 @@ function renderStandings(){
       ${corpCells}
       ${agentCells}
     </tr>`;
-  }).join('')}</tbody>`;
+  }).join('')||`<tr><td colspan="${2+corpIds.length+agentList.length}" class="empty">NO VISIBLE CHARACTERS</td></tr>`}</tbody>`;
 
   tm.innerHTML=thead+tbody;
 }
