@@ -357,13 +357,7 @@ const ESI='https://esi.evetech.net/latest';
 const SSO_AUTH='https://login.eveonline.com/v2/oauth/authorize';
 const SSO_TOKEN='https://login.eveonline.com/v2/oauth/token';
 const SSO_VERIFY='https://login.eveonline.com/oauth/verify';
-function getRedirectUri(){
-  if(location.protocol==='http:'||location.protocol==='https:'){
-    return `${location.origin}${location.pathname}`;
-  }
-  return 'https://eve-wallet-review.vercel.app';
-}
-const CB=getRedirectUri();
+const CB='https://eve-wallet-review.vercel.app';
 // ── LP 시스템 ──
 const LP_SETTINGS_KEY='ewr_lp_settings';
 const LANG_KEY='ewr_lang';
