@@ -349,7 +349,6 @@ const DATA_PFX='ewr_j_';
 const ESI='https://esi.evetech.net/latest';
 const SSO_AUTH='https://login.eveonline.com/v2/oauth/authorize';
 const SSO_TOKEN='https://login.eveonline.com/v2/oauth/token';
-const SSO_VERIFY='https://login.eveonline.com/oauth/verify';
 // EVE SSO requires an exact redirect URI match.
 const VERCEL_REDIRECT_ORIGIN='https://eve-wallet-review.vercel.app';
 const CB=`${VERCEL_REDIRECT_ORIGIN.replace(/\/+$/,'')}/`;
@@ -711,6 +710,30 @@ function saveToken(t,storageKey){
   t.expires_at=Date.now()+(t.expires_in||1200)*1000;
   localStorage.setItem(storageKey,JSON.stringify(t));
   return t;
+}
+
+function decodeJwtPayload(token){
+  if(!token||token.split('.').length<2)throw new Error('Invalid token');
+  const payload=token.split('.')[1];
+  const padded=payload.padEnd(payload.length+(4-payload.length%4)%4,'=').replace(/-/g,'+').replace(/_/g,'/');
+  const json=atob(padded);
+  return JSON.parse(json);
+}
+
+function getCharacterInfoFromToken(accessToken){
+  const data=decodeJwtPayload(accessToken);
+  const subParts=String(data.sub||'').split(':');
+  const characterId=subParts[subParts.length-1];
+  if(!characterId||!data.name)throw new Error('Missing character claims');
+  return {
+    CharacterID:Number(characterId),
+    CharacterName:data.name,
+    ExpiresOn:data.exp?new Date(data.exp*1000).toISOString():null,
+    Scopes:data.scp||[],
+    TokenType:'JWT',
+    CharacterOwnerHash:data.owner,
+    ClientID:data.azp
+  };
 }
 
 async function refreshToken(tokenObj){
@@ -2088,7 +2111,7 @@ async function init(){
   localStorage.removeItem('ewr_adding');
   showLoading('Fetching character info...');
   let charInfo;
-  try{charInfo=await esiFetch(SSO_VERIFY,tokenData.access_token);}catch(e){showToast('Session expired','error');hideLoading();return;}
+  try{charInfo=getCharacterInfoFromToken(tokenData.access_token);}catch(e){showToast('Session expired','error');hideLoading();return;}
   let corpId=null;
   if(walletType==='corp'){try{const cd=await esiFetch(`${ESI}/characters/${charInfo.CharacterID}/`,tokenData.access_token);corpId=cd.corporation_id;}catch(e){}}
   const charEntry={charId:charInfo.CharacterID,charName:charInfo.CharacterName,walletType,corpId,token:tokenData};
