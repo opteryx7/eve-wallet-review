@@ -804,8 +804,8 @@ const ADDING_FLAG_KEY='ewr_adding';
 const ADDING_TOKEN_KEY='ewr_adding_token';
 
 function getMainTokenData(){try{return JSON.parse(localStorage.getItem(TOKEN_KEY)||'null');}catch(e){return null;}}
-function getPendingAddTokenData(){try{return JSON.parse(localStorage.getItem(ADDING_TOKEN_KEY)||'null');}catch(e){return null;}}
-function clearPendingAddState(){localStorage.removeItem(ADDING_FLAG_KEY);localStorage.removeItem(ADDING_TOKEN_KEY);}
+function getPendingAddTokenData(){try{return JSON.parse(sessionStorage.getItem(ADDING_TOKEN_KEY)||'null');}catch(e){return null;}}
+function clearPendingAddState(){localStorage.removeItem(ADDING_FLAG_KEY);sessionStorage.removeItem(ADDING_TOKEN_KEY);}
 
 async function handleCallback(){
   const code=new URLSearchParams(location.search).get('code');
@@ -819,7 +819,7 @@ async function handleCallback(){
     const isAdding=localStorage.getItem(ADDING_FLAG_KEY)==='1';
     if(isAdding){
       t.expires_at=Date.now()+(t.expires_in||1200)*1000;
-      localStorage.setItem(ADDING_TOKEN_KEY,JSON.stringify(t));
+      sessionStorage.setItem(ADDING_TOKEN_KEY,JSON.stringify(t)); // sessionStorage 사용 (용량 분리)
     }else{
       saveToken(t,TOKEN_KEY);
     }
@@ -839,7 +839,7 @@ function addCharacter(){
   localStorage.setItem('ewr_wt',walletType);
   startLogin();
 }
-function logout(){localStorage.removeItem(TOKEN_KEY);localStorage.removeItem(CHARS_KEY);localStorage.removeItem(CHAR_CACHE_KEY);localStorage.removeItem(ADDING_FLAG_KEY);localStorage.removeItem(ADDING_TOKEN_KEY);for(let i=0;i<10;i++){localStorage.removeItem(DATA_PFX+i);localStorage.removeItem('ewr_tok_'+i);localStorage.removeItem(CHAR_CACHE_KEY+'_a'+i);}registeredChars=[];charDataCache={};document.getElementById('login-screen').classList.add('visible');document.getElementById('dashboard').style.display='none';setStatus(false);}
+function logout(){localStorage.removeItem(TOKEN_KEY);localStorage.removeItem(CHARS_KEY);localStorage.removeItem(CHAR_CACHE_KEY);localStorage.removeItem(ADDING_FLAG_KEY);sessionStorage.removeItem(ADDING_TOKEN_KEY);for(let i=0;i<10;i++){localStorage.removeItem(DATA_PFX+i);localStorage.removeItem('ewr_tok_'+i);localStorage.removeItem(CHAR_CACHE_KEY+'_a'+i);}registeredChars=[];charDataCache={};document.getElementById('login-screen').classList.add('visible');document.getElementById('dashboard').style.display='none';setStatus(false);}
 
 // ── ESI ──
 async function esiFetch(url,token){const r=await fetch(url,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error(`${r.status}`);return r.json();}
