@@ -2387,11 +2387,29 @@ async function init(){
   applyLangUI();
   loadSpPrices();
 
-  // ── 1. EVE SSO 콜백 처리 ──
+  // ── 1. EVE SSO 콜백 처리 — UI 먼저 표시 후 토큰 교환 ──
   const code=new URLSearchParams(location.search).get('code');
   if(code){
+    // 캐시 있으면 대시보드 먼저, 없으면 로그인 화면 먼저 보여주기
+    const cachedChars=JSON.parse(localStorage.getItem(CHARS_KEY)||'[]');
+    const hasCached=localStorage.getItem(CHAR_CACHE_KEY)&&cachedChars.length>0;
+    if(hasCached){
+      // 캐시 데이터로 즉시 대시보드 표시
+      walletType=localStorage.getItem('ewr_wt')||'personal';
+      registeredChars=cachedChars;
+      loadCharCache();
+      document.getElementById('login-screen').classList.remove('visible');
+      document.getElementById('dashboard').style.display='block';
+      setStatus(true);renderAll();hideLoading();
+      loadLpPriceCache();initLpDefaults();
+    } else {
+      // 캐시 없으면 로그인 화면이라도 표시
+      document.getElementById('login-screen').classList.add('visible');
+      hideLoading();
+    }
+    // 토큰 교환 (백그라운드)
     const ok=await handleCallback();
-    if(!ok){document.getElementById('login-screen').classList.add('visible');hideLoading();return;}
+    if(!ok){document.getElementById('login-screen').classList.add('visible');return;}
   }
 
   // ── 2. 토큰 확인 ──
