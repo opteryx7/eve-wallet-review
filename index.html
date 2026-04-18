@@ -184,8 +184,8 @@ main{max-width:1440px;margin:0 auto;padding:1.5rem 2rem;}
     <div style="display:flex;gap:8px;">
       <button class="btn-sm g" id="btn-addchar" onclick="addCharacter()">+ 캐릭터 추가</button>
       <button class="btn-sm" id="btn-csv" onclick="exportCSV()">CSV 저장</button>
-      <button class="btn-sm g" onclick="exportExcel()">엑셀 내보내기</button>
-      <button class="btn-sm g" onclick="exportData()">데이터 내보내기</button>
+      <button class="btn-sm" onclick="exportExcel()">엑셀 내보내기</button>
+      <button class="btn-sm" onclick="exportData()">데이터 내보내기</button>
       <button class="btn-sm" onclick="document.getElementById('import-file').click()">데이터 불러오기</button>
       <input type="file" id="import-file" accept=".json" style="display:none" onchange="importData(this)">
       <button class="btn-sm" id="btn-logout" onclick="logout()">로그아웃</button>
@@ -272,6 +272,9 @@ main{max-width:1440px;margin:0 auto;padding:1.5rem 2rem;}
   <!-- ── STANDING ── -->
   <div id="page-standing" style="display:none;">
     <div class="sub-tabs" id="standing-faction-tabs" style="margin-bottom:1rem;"></div>
+    <div style="display:flex;justify-content:flex-end;margin:-.25rem 0 1rem;">
+      <button class="btn-sm" id="btn-standing-chars" onclick="toggleStandingChars()">Hide Characters</button>
+    </div>
     <div class="panel" style="margin-bottom:1rem;">
       <div class="ph" style="cursor:pointer;" onclick="toggleStandingSettings()">
         <span class="pt">에이전트 설정</span>
@@ -479,18 +482,27 @@ const CORP_GROUP={
 const FACTION_IDS={guristas:500010,sansha:500019,blood:500012,serpentis:500020,angel:500011,mordu:500018};
 const FACTION_NAMES={guristas:"Guristas Pirates",sansha:"Sansha's Nation",blood:"Blood Raider Covenant",serpentis:"Serpentis",angel:"Angel Cartel",mordu:"Mordu's Legion"};
 const STANDING_AGENT_KEY='ewr_standing_agents';
+const STANDING_UI_KEY='ewr_standing_ui';
 let standingAgentSettings={}; // grp->{order:[name,...],hidden:[name,...]}
+let standingUi={hideChars:false};
 let activeStandingFaction=null;
 let dragSrcIdx=null;
 
 function loadStandingAgentSettings(){try{standingAgentSettings=JSON.parse(localStorage.getItem(STANDING_AGENT_KEY)||'{}');}catch(e){}}
 function saveStandingAgentSettings(){localStorage.setItem(STANDING_AGENT_KEY,JSON.stringify(standingAgentSettings));}
+function loadStandingUiSettings(){try{standingUi={hideChars:false,...JSON.parse(localStorage.getItem(STANDING_UI_KEY)||'{}')};}catch(e){standingUi={hideChars:false};}}
+function saveStandingUiSettings(){localStorage.setItem(STANDING_UI_KEY,JSON.stringify(standingUi));}
 function toggleStandingSettings(){
   const el=document.getElementById('standing-agent-settings');
   const lbl=document.getElementById('standing-settings-lbl');
   const show=el.style.display==='none';
   el.style.display=show?'':'none';
   if(lbl)lbl.textContent=show?'▲ 접기':'▼ 설정';
+}
+function toggleStandingChars(){
+  standingUi.hideChars=!standingUi.hideChars;
+  saveStandingUiSettings();
+  renderStandings();
 }
 function onAgentDragStart(e,idx){dragSrcIdx=idx;e.dataTransfer.effectAllowed='move';}
 function onAgentDragOver(e){e.preventDefault();e.dataTransfer.dropEffect='move';}
@@ -1787,6 +1799,8 @@ function renderCharList(){
       <img src="https://images.evetech.net/characters/${c.charId}/portrait?size=32" style="width:22px;height:22px;border-radius:50%;" onerror="this.style.display='none'">
       <span style="font-size:12px;color:var(--text2)">${c.charName}</span>
       ${c.walletType==='corp'?`<span style="font-size:9px;color:var(--text3);font-family:'Noto Sans KR',sans-serif">CORP</span>`:''}
+      ${registeredChars.length>1?`<span onclick="moveChar(${i},-1)" style="color:${i===0?'var(--text3)':'var(--accent)'};font-size:11px;cursor:${i===0?'default':'pointer'};margin-left:4px;">Up</span>`:''}
+      ${registeredChars.length>1?`<span onclick="moveChar(${i},1)" style="color:${i===registeredChars.length-1?'var(--text3)':'var(--accent)'};font-size:11px;cursor:${i===registeredChars.length-1?'default':'pointer'};">Dn</span>`:''}
       ${registeredChars.length>1?`<span onclick="removeChar(${i})" style="color:var(--text3);font-size:13px;cursor:pointer;margin-left:2px;">×</span>`:''}
     </div>`).join('');
 
@@ -1800,17 +1814,7 @@ function renderCharList(){
   buildSubTabs('lp-char-tabs','activeLPChar','renderLP','setActiveLP');
 }
 
-function removeChar(idx){
-  const nextChars=registeredChars.filter((_,i)=>i!==idx);
-  const nextData={};
-  const nextTokens={};
-  nextChars.forEach((char,newIdx)=>{
-    const oldIdx=registeredChars.findIndex((c,i)=>i!==idx&&c.charId===char.charId);
-    if(oldIdx>=0){
-      nextData[newIdx]=charDataCache[oldIdx]||loadCachedCharData(oldIdx);
-      nextTokens[newIdx]=JSON.parse(localStorage.getItem('ewr_tok_'+oldIdx)||'null');
-    }
-  });
+function persistCharacterState(nextChars,nextData,nextTokens){
   for(let i=0;i<100;i++){
     localStorage.removeItem(DATA_PFX+i);
     localStorage.removeItem(getSnapshotKey(i));
@@ -1826,8 +1830,40 @@ function removeChar(idx){
     if(nextTokens[idxNum])setStoredJson('ewr_tok_'+idxNum,nextTokens[idxNum]);
   });
   setStoredJson(CHARS_KEY,registeredChars);
-  if(!registeredChars.length){logout();return;}
   updateStorageStatus();
+}
+
+function moveChar(idx,delta){
+  const target=idx+delta;
+  if(target<0||target>=registeredChars.length)return;
+  const nextChars=[...registeredChars];
+  const [moved]=nextChars.splice(idx,1);
+  nextChars.splice(target,0,moved);
+  const nextData={};
+  const nextTokens={};
+  nextChars.forEach((char,newIdx)=>{
+    const oldIdx=registeredChars.findIndex(c=>c.charId===char.charId);
+    nextData[newIdx]=charDataCache[oldIdx]||loadCachedCharData(oldIdx);
+    nextTokens[newIdx]=JSON.parse(localStorage.getItem('ewr_tok_'+oldIdx)||'null');
+  });
+  persistCharacterState(nextChars,nextData,nextTokens);
+  renderAll();
+  if(document.getElementById('page-standing').style.display!=='none')renderStandings();
+}
+
+function removeChar(idx){
+  const nextChars=registeredChars.filter((_,i)=>i!==idx);
+  const nextData={};
+  const nextTokens={};
+  nextChars.forEach((char,newIdx)=>{
+    const oldIdx=registeredChars.findIndex((c,i)=>i!==idx&&c.charId===char.charId);
+    if(oldIdx>=0){
+      nextData[newIdx]=charDataCache[oldIdx]||loadCachedCharData(oldIdx);
+      nextTokens[newIdx]=JSON.parse(localStorage.getItem('ewr_tok_'+oldIdx)||'null');
+    }
+  });
+  persistCharacterState(nextChars,nextData,nextTokens);
+  if(!registeredChars.length){logout();return;}
   renderAll();
 }
 
@@ -2041,6 +2077,8 @@ function getMainFactionGroup(){
 function renderStandings(){
   if(!activeStandingFaction)activeStandingFaction=getMainFactionGroup();
   const grp=activeStandingFaction;
+  const charBtn=document.getElementById('btn-standing-chars');
+  if(charBtn)charBtn.textContent=standingUi.hideChars?'Show Characters':'Hide Characters';
 
   // 팩션 탭: LP + standings 데이터에서 감지, 둘 다 없으면 전체 표시
   const availGroups=new Set();
@@ -2165,13 +2203,13 @@ function renderStandings(){
   const stFmt=v=>v===null?'—':v.toFixed(2);
 
   // 헤더: 팩션 | 콥들 | 에이전트들
-  const hasAgents=agentList.length>0;
-  const stAlign=hasAgents?'center':'left';
+  const stAlign='left';
   const corpThs=corpIds.map(cid=>`<th style="text-align:${stAlign};white-space:nowrap;">${corpNames[cid]||cid}</th>`).join('');
-  const agentThs=agentList.map(n=>`<th style="text-align:center;font-size:9px;color:var(--text3);max-width:60px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${n}">${n.split(' ')[0]}<br><span style="font-size:8px;">${n.split(' ').slice(1).join(' ')}</span></th>`).join('');
+  const agentThs=agentList.map(n=>`<th style="text-align:${stAlign};font-size:9px;color:var(--text3);max-width:60px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${n}">${n.split(' ')[0]}<br><span style="font-size:8px;">${n.split(' ').slice(1).join(' ')}</span></th>`).join('');
+  const charHeader=standingUi.hideChars?'':`<th>캐릭터</th>`;
 
   const thead=`<thead><tr>
-    <th>캐릭터</th>
+    ${charHeader}
     <th style="text-align:${stAlign};">팩션</th>
     ${corpThs}
     ${agentThs}
@@ -2179,6 +2217,7 @@ function renderStandings(){
 
   const tbody=`<tbody>${registeredChars.map((c,i)=>{
     const fv=getSt(i,factionId);
+    const charCell=standingUi.hideChars?'':`<td style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;">${c.charName}</td>`;
     const corpCells=corpIds.map(cid=>{
       const v=getSt(i,cid);
       return`<td style="text-align:${stAlign};font-weight:600;color:${stColor(v)};">${stFmt(v)}</td>`;
@@ -2186,10 +2225,10 @@ function renderStandings(){
     const agentCells=agentList.map(n=>{
       const id=agentNameToId[n];
       const v=id?getSt(i,id):null;
-      return`<td style="text-align:center;color:${stColor(v)};">${stFmt(v)}</td>`;
+      return`<td style="text-align:${stAlign};color:${stColor(v)};">${stFmt(v)}</td>`;
     }).join('');
     return`<tr>
-      <td style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;">${c.charName}</td>
+      ${charCell}
       <td style="text-align:${stAlign};font-size:15px;font-weight:700;color:${stColor(fv)};">${stFmt(fv)}</td>
       ${corpCells}
       ${agentCells}
@@ -2223,7 +2262,6 @@ function updateRefreshInfo(){
   }
   if(syncStatusText)parts.push(syncStatusText);
   if(lastSyncAt)parts.push(`Updated ${new Date(lastSyncAt).toLocaleTimeString()}`);
-  if(storageStatusText)parts.push(storageStatusText);
   el.textContent=parts.join(' | ');
 }
 
@@ -2291,6 +2329,7 @@ async function init(){
   loadNameCache();
   loadLpSettings();
   loadStandingAgentSettings();
+  loadStandingUiSettings();
   currentLang=localStorage.getItem(LANG_KEY)||'ko';
   const ls=document.getElementById('lang-sel');
   if(ls)ls.value=currentLang;
@@ -2353,6 +2392,7 @@ async function initEnhanced(){
   loadNameCache();
   loadLpSettings();
   loadStandingAgentSettings();
+  loadStandingUiSettings();
   updateStorageStatus();
   currentLang=localStorage.getItem(LANG_KEY)||'ko';
   const ls=document.getElementById('lang-sel');
