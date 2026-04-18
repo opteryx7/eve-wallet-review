@@ -755,7 +755,22 @@ async function resolveLocationNames(locIds,token){
 function selectWT(t){walletType=t;document.getElementById('btn-personal').classList.toggle('active',t==='personal');document.getElementById('btn-corp').classList.toggle('active',t==='corp');}
 function generateVerifier(){const a=new Uint8Array(32);crypto.getRandomValues(a);return btoa(String.fromCharCode(...a)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');}
 async function generateChallenge(v){const h=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v));return btoa(String.fromCharCode(...new Uint8Array(h))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');}
-async function startLogin(){localStorage.setItem('ewr_wt',walletType);const v=generateVerifier(),c=await generateChallenge(v);sessionStorage.setItem('pkce_v',v);location.href=SSO_AUTH+'?'+new URLSearchParams({response_type:'code',redirect_uri:CB,client_id:CLIENT_ID,scope:SCOPES,state:'ewr',code_challenge:c,code_challenge_method:'S256'});}
+async function startLogin(){
+  // 일반 로그인 시 캐릭 추가 플래그 반드시 초기화 (루프 방지)
+  clearPendingAddState();
+  localStorage.setItem('ewr_wt',walletType);
+  const v=generateVerifier(),c=await generateChallenge(v);
+  sessionStorage.setItem('pkce_v',v);
+  location.href=SSO_AUTH+'?'+new URLSearchParams({response_type:'code',redirect_uri:CB,client_id:CLIENT_ID,scope:SCOPES,state:'ewr',code_challenge:c,code_challenge_method:'S256'});
+}
+
+async function startLoginForAddChar(){
+  // 캐릭 추가 전용: 플래그를 지우지 않고 SSO 이동
+  localStorage.setItem('ewr_wt',walletType);
+  const v=generateVerifier(),c=await generateChallenge(v);
+  sessionStorage.setItem('pkce_v',v);
+  location.href=SSO_AUTH+'?'+new URLSearchParams({response_type:'code',redirect_uri:CB,client_id:CLIENT_ID,scope:SCOPES,state:'ewr',code_challenge:c,code_challenge_method:'S256'});
+}
 function saveToken(t,storageKey){
   t.expires_at=Date.now()+(t.expires_in||1200)*1000;
   localStorage.setItem(storageKey,JSON.stringify(t));
@@ -838,7 +853,7 @@ function addCharacter(){
   setBgRefreshStatus(null);
   localStorage.setItem(ADDING_FLAG_KEY,'1');
   localStorage.setItem('ewr_wt',walletType);
-  startLogin();
+  startLoginForAddChar();
 }
 function logout(){localStorage.removeItem(TOKEN_KEY);localStorage.removeItem(CHARS_KEY);localStorage.removeItem(CHAR_CACHE_KEY);localStorage.removeItem(ADDING_FLAG_KEY);sessionStorage.removeItem(ADDING_TOKEN_KEY);for(let i=0;i<10;i++){localStorage.removeItem(DATA_PFX+i);localStorage.removeItem('ewr_tok_'+i);localStorage.removeItem(CHAR_CACHE_KEY+'_a'+i);}registeredChars=[];charDataCache={};document.getElementById('login-screen').classList.add('visible');document.getElementById('dashboard').style.display='none';setStatus(false);}
 
