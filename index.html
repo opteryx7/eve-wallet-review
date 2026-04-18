@@ -2393,12 +2393,10 @@ async function init(){
 
   // ── 3. 캐릭 추가 콜백: 새 캐릭만 처리 ──
   if(isAdding){
-    showLoading('캐릭터 등록 중...');
-    // 새로 로그인한 캐릭 정보 가져오기 (TOKEN_KEY에 방금 저장된 토큰 사용)
+    showLoading('캐릭터 확인 중...');
     let charInfo;
     try{charInfo=await esiFetch(SSO_VERIFY, tokenData.access_token);}
     catch(e){
-      // access_token 만료면 refresh 시도
       const tok=JSON.parse(localStorage.getItem(TOKEN_KEY)||'null');
       const fresh=await refreshToken(tok);
       if(fresh){saveToken(fresh,TOKEN_KEY);try{charInfo=await esiFetch(SSO_VERIFY,fresh.access_token);}catch(e2){}}
@@ -2412,20 +2410,21 @@ async function init(){
     const myIdx=registeredChars.findIndex(c=>c.charId===charInfo.CharacterID);
     if(myIdx>=0){localStorage.setItem('ewr_tok_'+myIdx,JSON.stringify(tokenData));saveToken(tokenData,'ewr_tok_'+myIdx);}
     localStorage.setItem(CHARS_KEY,JSON.stringify(registeredChars));
-    // 기존 캐릭 캐시 복원 후 새 캐릭만 로드
+    // 기존 캐릭 캐시 복원, 새 캐릭은 빈 데이터로 즉시 화면 표시
     loadCharCache();
-    const t=await getValidToken(myIdx)||tokenData.access_token;
-    setBgRefreshStatus(`${charInfo.CharacterName} 로딩 중...`);
-    setBgMode(true);
-    await loadCharData(myIdx,t,()=>{saveCharCache();renderAll();});
-    setBgMode(false);
-    setBgRefreshStatus('등록 완료',true);
+    if(!charDataCache[myIdx]) charDataCache[myIdx]={walletBalance:0,assetValue:0,totalLP:0,totalSP:0,orderValue:0,contractValue:0,journal:[],priceMap:{},loyaltyPoints:[],lpCorpNames:{},assets:[],orders:[],contracts:[],standings:[],standingNames:{},agentCorpMap:{}};
     document.getElementById('login-screen').classList.remove('visible');
     document.getElementById('dashboard').style.display='block';
     setStatus(true);renderAll();hideLoading();
     loadLpPriceCache();initLpDefaults();
-    showToast(`${charInfo.CharacterName} 등록 완료`,'success');
     startAutoRefresh();
+    // 새 캐릭 데이터 백그라운드 스트리밍
+    const t=await getValidToken(myIdx)||tokenData.access_token;
+    setBgRefreshStatus(`${charInfo.CharacterName} 데이터 불러오는 중...`);
+    setBgMode(true);
+    await loadCharData(myIdx,t,()=>{saveCharCache();renderAll();});
+    setBgMode(false);
+    setBgRefreshStatus('등록 완료',true);
     return;
   }
 
