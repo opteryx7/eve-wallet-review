@@ -2387,28 +2387,15 @@ async function init(){
   applyLangUI();
   loadSpPrices();
 
-  // ── 1. EVE SSO 콜백 처리 — UI 먼저 표시 후 토큰 교환 ──
+  // ── 1. EVE SSO 콜백 처리 ──
   const code=new URLSearchParams(location.search).get('code');
   if(code){
-    // 캐시 있으면 대시보드를, 없으면 로그인 화면을 즉시 표시 (검은 화면 방지)
-    const cachedChars=JSON.parse(localStorage.getItem(CHARS_KEY)||'[]');
-    const hasCached=localStorage.getItem(CHAR_CACHE_KEY)&&cachedChars.length>0;
-    if(hasCached){
-      walletType=localStorage.getItem('ewr_wt')||'personal';
-      registeredChars=cachedChars;
-      loadCharCache();
-      document.getElementById('login-screen').classList.remove('visible');
-      document.getElementById('dashboard').style.display='block';
-      setStatus(true);renderAll();hideLoading();
-    } else {
-      document.getElementById('login-screen').classList.add('visible');
-      hideLoading();
-    }
-    // 토큰 교환 대기 (이후 처리는 아래 경로들이 담당)
+    // 검은 화면 방지: 로그인 화면 표시
+    document.getElementById('login-screen').classList.add('visible');
+    hideLoading();
     const ok=await handleCallback();
-    if(!ok){document.getElementById('login-screen').classList.add('visible');return;}
-    // charDataCache를 초기화해서 아래 isAdding 경로가 새로 처리하도록
-    if(hasCached) charDataCache={};
+    if(!ok){return;}
+    document.getElementById('login-screen').classList.remove('visible');
   }
 
   // ── 2. 토큰 확인 ──
