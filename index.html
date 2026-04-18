@@ -854,7 +854,13 @@ function addCharacter(){
   setBgRefreshStatus(null);
   startLogin(true);
 }
-function logout(){localStorage.removeItem(TOKEN_KEY);localStorage.removeItem(CHARS_KEY);localStorage.removeItem(CHAR_CACHE_KEY);localStorage.removeItem(ADDING_FLAG_KEY);for(let i=0;i<10;i++){localStorage.removeItem(DATA_PFX+i);localStorage.removeItem('ewr_tok_'+i);localStorage.removeItem(CHAR_CACHE_KEY+'_a'+i);}registeredChars=[];charDataCache={};document.getElementById('login-screen').classList.add('visible');document.getElementById('dashboard').style.display='none';setStatus(false);}
+function showLoginScreenState(){
+  document.getElementById('dashboard').style.display='none';
+  document.getElementById('login-screen').classList.add('visible');
+  hideLoading();
+  setStatus(false);
+}
+function logout(){localStorage.removeItem(TOKEN_KEY);localStorage.removeItem(CHARS_KEY);localStorage.removeItem(CHAR_CACHE_KEY);localStorage.removeItem(ADDING_FLAG_KEY);for(let i=0;i<10;i++){localStorage.removeItem(DATA_PFX+i);localStorage.removeItem('ewr_tok_'+i);localStorage.removeItem(CHAR_CACHE_KEY+'_a'+i);}registeredChars=[];charDataCache={};showLoginScreenState();}
 
 // ?? ESI ??
 async function esiFetch(url,token){const r=await fetch(url,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error(`${r.status}`);return r.json();}
@@ -2552,8 +2558,7 @@ async function init(){
   registeredChars=JSON.parse(localStorage.getItem(CHARS_KEY)||'[]');
   const tokenData=getMainTokenData();
   if(!tokenData){
-    document.getElementById('login-screen').classList.add('visible');
-    hideLoading();
+    showLoginScreenState();
     return;
   }
 
@@ -2604,7 +2609,13 @@ async function init(){
   let charInfo=parseJwt(freshAccess);
   if(!charInfo){
     showLoading('罹먮┃???뺤씤 以?..');
-    try{charInfo=await esiFetch(SSO_VERIFY,freshAccess);}catch(e){showToast('?몄뀡 留뚮즺 ???ㅼ떆 濡쒓렇?명빐二쇱꽭??,'error');hideLoading();return;}
+    try{charInfo=await esiFetch(SSO_VERIFY,freshAccess);}catch(e){
+      localStorage.removeItem(TOKEN_KEY);
+      clearPendingAddState();
+      showToast('세션이 만료되었습니다. 다시 로그인해주세요.','error');
+      showLoginScreenState();
+      return;
+    }
   }
 
   let corpId=null;
