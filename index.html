@@ -788,6 +788,18 @@ async function getValidToken(idx){
   return tok?.access_token||null;
 }
 
+// JWT 토큰에서 캐릭터 정보 추출 (서버 요청 없이 즉시)
+function parseJwt(token){
+  try{
+    const payload=token.split('.')[1];
+    const decoded=JSON.parse(atob(payload.replace(/-/g,'+').replace(/_/g,'/')));
+    // EVE SSO v2 JWT: sub = "CHARACTER:EVE:12345678"
+    const charId=parseInt((decoded.sub||'').split(':')[2]);
+    const charName=decoded.name||'';
+    return charId&&charName?{CharacterID:charId,CharacterName:charName}:null;
+  }catch(e){return null;}
+}
+
 async function handleCallback(){const code=new URLSearchParams(location.search).get('code');if(!code)return false;history.replaceState({},'',location.pathname);walletType=localStorage.getItem('ewr_wt')||'personal';showLoading('Authenticating...');try{const r=await fetch(SSO_TOKEN,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'authorization_code',code,redirect_uri:CB,client_id:CLIENT_ID,code_verifier:sessionStorage.getItem('pkce_v')})});const t=await r.json();if(!r.ok)throw new Error(t.error_description||'Auth failed');saveToken(t,TOKEN_KEY);return true;}catch(e){showToast(e.message,'error');hideLoading();return false;}}
 function addCharacter(){
   // 진행 중인 백그라운드 갱신 중단 및 상태 초기화
@@ -2393,13 +2405,11 @@ async function init(){
 
   // ── 3. 캐릭 추가 콜백: 새 캐릭만 처리 ──
   if(isAdding){
-    showLoading('캐릭터 확인 중...');
-    let charInfo;
-    try{charInfo=await esiFetch(SSO_VERIFY, tokenData.access_token);}
-    catch(e){
-      const tok=JSON.parse(localStorage.getItem(TOKEN_KEY)||'null');
-      const fresh=await refreshToken(tok);
-      if(fresh){saveToken(fresh,TOKEN_KEY);try{charInfo=await esiFetch(SSO_VERIFY,fresh.access_token);}catch(e2){}}
+    // JWT에서 즉시 캐릭터 정보 파싱 (서버 요청 없음)
+    let charInfo=parseJwt(tokenData.access_token);
+    if(!charInfo){
+      // JWT 파싱 실패 시만 SSO_VERIFY 폴백
+      try{charInfo=await esiFetch(SSO_VERIFY,tokenData.access_token);}catch(e){}
     }
     if(!charInfo){showToast('캐릭터 인증 실패','error');hideLoading();return;}
     let corpId=null;
@@ -2469,10 +2479,13 @@ async function init(){
   }
 
   // ── 5. 첫 시작 (캐시 없음) — 페이지 먼저 띄우고 스트리밍 로드 ──
-  showLoading('캐릭터 정보 로딩 중...');
   const freshAccess=await getValidToken(0)||tokenData.access_token;
-  let charInfo;
-  try{charInfo=await esiFetch(SSO_VERIFY,freshAccess);}catch(e){showToast('세션 만료 — 다시 로그인해주세요','error');hideLoading();return;}
+  // JWT에서 즉시 캐릭터 정보 파싱 (서버 요청 없음)
+  let charInfo=parseJwt(freshAccess);
+  if(!charInfo){
+    showLoading('캐릭터 확인 중...');
+    try{charInfo=await esiFetch(SSO_VERIFY,freshAccess);}catch(e){showToast('세션 만료 — 다시 로그인해주세요','error');hideLoading();return;}
+  }
   let corpId=null;
   if(walletType==='corp'){try{const cd=await esiFetch(`${ESI}/characters/${charInfo.CharacterID}/`,freshAccess);corpId=cd.corporation_id;}catch(e){}}
   const charEntry={charId:charInfo.CharacterID,charName:charInfo.CharacterName,walletType,corpId,token:tokenData};
