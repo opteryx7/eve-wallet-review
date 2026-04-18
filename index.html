@@ -642,6 +642,7 @@ function fmtISK(v){if(v===null||v===undefined)return'—';const a=Math.abs(v),s=
 function fmtNum(v){return v?Math.round(v).toLocaleString():'0';}
 let silentRefresh=false;
 let bgMode=false; // true이면 오버레이 로딩 완전 차단
+function setBgMode(v){bgMode=v;updateRefreshInfo();}
 function showLoading(m){if(silentRefresh||bgMode)return;document.getElementById('loading').style.display='flex';document.getElementById('loading-text').textContent=m||'LOADING...';}
 function hideLoading(){if(bgMode)return;document.getElementById('loading').style.display='none';}
 
@@ -792,7 +793,7 @@ function addCharacter(){
   // 진행 중인 백그라운드 갱신 중단 및 상태 초기화
   bgLoadAbort=true;
   bgLoadActive=false;
-  bgMode=false;
+  setBgMode(false);
   setBgRefreshStatus(null);
   localStorage.setItem('ewr_adding','1');
   localStorage.setItem('ewr_wt',walletType);
@@ -805,29 +806,88 @@ async function esiFetch(url,token){const r=await fetch(url,{headers:{Authorizati
 async function fetchPages(url,token){const all=[];let page=1;while(true){const r=await fetch(`${url}${url.includes('?')?'&':'?'}page=${page}`,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)break;const d=await r.json();if(!d.length)break;all.push(...d);if(page>=parseInt(r.headers.get('X-Pages')||'1'))break;page++;}return all;}
 
 // ── LOAD ──
-async function loadCharData(idx,token){
-  const c=registeredChars[idx];const cid=c.charId,wt=c.walletType,coid=c.corpId;const d={};
-  try{if(wt==='corp'){showLoading('Loading corp wallet...');const divs=await esiFetch(`${ESI}/corporations/${coid}/wallets/`,token);d.walletBalance=divs.reduce((s,x)=>s+x.balance,0);d.corpDivisions=divs;}else{showLoading('Loading wallet...');d.walletBalance=await esiFetch(`${ESI}/characters/${cid}/wallet/`,token);}}catch(e){console.warn(`[Wallet] char ${idx} (${c.charName}) 실패:`,e.message);d.walletBalance=0;}
-  try{showLoading('Loading assets...');d.assets=wt==='corp'?await fetchPages(`${ESI}/corporations/${coid}/assets/`,token):await fetchPages(`${ESI}/characters/${cid}/assets/`,token);}catch(e){d.assets=[];}
-  try{showLoading('Loading LP...');const lp=await esiFetch(`${ESI}/characters/${cid}/loyalty/points/`,token);d.loyaltyPoints=lp;d.totalLP=lp.reduce((s,x)=>s+x.loyalty_points,0);}catch(e){d.loyaltyPoints=[];d.totalLP=0;}
-  try{showLoading('Loading skills...');const sk=await esiFetch(`${ESI}/characters/${cid}/skills/`,token);d.totalSP=sk.total_sp||0;}catch(e){d.totalSP=0;}
-  try{showLoading('Loading orders...');d.orders=wt==='corp'?await fetchPages(`${ESI}/corporations/${coid}/orders/`,token):await fetchPages(`${ESI}/characters/${cid}/orders/`,token);d.orderValue=d.orders.filter(o=>!o.is_buy_order).reduce((s,o)=>s+o.price*o.volume_remain,0);}catch(e){d.orders=[];d.orderValue=0;}
-  try{showLoading('Loading contracts...');const allC=wt==='corp'?await fetchPages(`${ESI}/corporations/${coid}/contracts/`,token):await fetchPages(`${ESI}/characters/${cid}/contracts/`,token);d.contracts=allC.filter(x=>x.status==='outstanding');d.contractValue=d.contracts.filter(x=>x.type==='item_exchange').reduce((s,x)=>s+(x.price||0),0);}catch(e){d.contracts=[];d.contractValue=0;}
-  try{showLoading('Loading journal...');const sk=DATA_PFX+idx;const existing=JSON.parse(localStorage.getItem(sk)||'[]');const eids=new Set(existing.map(e=>e.id));let fresh;if(wt==='corp'){fresh=[];for(let div=1;div<=7;div++){const en=await fetchPages(`${ESI}/corporations/${coid}/wallets/${div}/journal/`,token);en.forEach(e=>{e.division=div;e.charName=c.charName;e.charId=cid;});fresh.push(...en);}}else{fresh=await fetchPages(`${ESI}/characters/${cid}/wallet/journal/`,token);fresh.forEach(e=>{e.charName=c.charName;e.charId=cid;});}let added=0;fresh.forEach(e=>{if(!eids.has(e.id)){existing.push(e);added++;}});localStorage.setItem(sk,JSON.stringify(existing));d.journal=existing;d.journalAdded=added;}catch(e){d.journal=JSON.parse(localStorage.getItem(DATA_PFX+idx)||'[]');d.journalAdded=0;}
-  try{showLoading('Loading market prices...');const prices=await fetch(`${ESI}/markets/prices/`).then(r=>r.json());const pm={};prices.forEach(p=>pm[p.type_id]=p.adjusted_price||p.average_price||0);Object.assign(globalPriceMap,pm);d.assetValue=(d.assets||[]).reduce((s,a)=>s+(pm[a.type_id]||0)*a.quantity,0);d.priceMap=pm;}catch(e){d.assetValue=0;d.priceMap={};}
+// onStep(d): 각 단계 완료시 호출되는 콜백 (즉시 렌더링용)
+async function loadCharData(idx, token, onStep){
+  const c=registeredChars[idx];
+  const cid=c.charId, wt=c.walletType, coid=c.corpId;
+  const d = charDataCache[idx] ? {...charDataCache[idx]} : {}; // 기존 캐시 유지하며 업데이트
 
-  // LP 팩션 이름 가져오기
+  const step = ()=>{ charDataCache[idx]=d; if(onStep) onStep(d); };
+
+  // ── 1단계: 지갑 (빠름) ──
+  try{
+    if(wt==='corp'){const divs=await esiFetch(`${ESI}/corporations/${coid}/wallets/`,token);d.walletBalance=divs.reduce((s,x)=>s+x.balance,0);d.corpDivisions=divs;}
+    else{d.walletBalance=await esiFetch(`${ESI}/characters/${cid}/wallet/`,token);}
+  }catch(e){d.walletBalance=d.walletBalance||0;}
+  step();
+
+  // ── 2단계: LP, SP, 오더, 계약 (빠름, 병렬) ──
+  await Promise.allSettled([
+    esiFetch(`${ESI}/characters/${cid}/loyalty/points/`,token)
+      .then(lp=>{d.loyaltyPoints=lp;d.totalLP=lp.reduce((s,x)=>s+x.loyalty_points,0);})
+      .catch(()=>{d.loyaltyPoints=d.loyaltyPoints||[];d.totalLP=d.totalLP||0;}),
+    esiFetch(`${ESI}/characters/${cid}/skills/`,token)
+      .then(sk=>{d.totalSP=sk.total_sp||0;})
+      .catch(()=>{d.totalSP=d.totalSP||0;}),
+    (wt==='corp'?fetchPages(`${ESI}/corporations/${coid}/orders/`,token):fetchPages(`${ESI}/characters/${cid}/orders/`,token))
+      .then(orders=>{d.orders=orders;d.orderValue=orders.filter(o=>!o.is_buy_order).reduce((s,o)=>s+o.price*o.volume_remain,0);})
+      .catch(()=>{d.orders=d.orders||[];d.orderValue=d.orderValue||0;}),
+    (wt==='corp'?fetchPages(`${ESI}/corporations/${coid}/contracts/`,token):fetchPages(`${ESI}/characters/${cid}/contracts/`,token))
+      .then(allC=>{d.contracts=allC.filter(x=>x.status==='outstanding');d.contractValue=d.contracts.filter(x=>x.type==='item_exchange').reduce((s,x)=>s+(x.price||0),0);})
+      .catch(()=>{d.contracts=d.contracts||[];d.contractValue=d.contractValue||0;}),
+  ]);
+  step();
+
+  // ── 3단계: 자산 + 시세 (느림, 병렬) ──
+  const [assetsResult, pricesResult] = await Promise.allSettled([
+    (wt==='corp'?fetchPages(`${ESI}/corporations/${coid}/assets/`,token):fetchPages(`${ESI}/characters/${cid}/assets/`,token)),
+    fetch(`${ESI}/markets/prices/`).then(r=>r.json()),
+  ]);
+  if(assetsResult.status==='fulfilled') d.assets=assetsResult.value;
+  else d.assets=d.assets||[];
+  if(pricesResult.status==='fulfilled'){
+    const pm={};pricesResult.value.forEach(p=>pm[p.type_id]=p.adjusted_price||p.average_price||0);
+    Object.assign(globalPriceMap,pm);d.priceMap=pm;
+  } else d.priceMap=d.priceMap||{};
+  d.assetValue=(d.assets||[]).reduce((s,a)=>s+(d.priceMap[a.type_id]||0)*a.quantity,0);
+  step();
+
+  // ── 4단계: LP 이름 (빠름) ──
   if(d.loyaltyPoints?.length){
     try{
       const corpIds=d.loyaltyPoints.map(l=>l.corporation_id);
       const r=await fetch(`${ESI}/universe/names/`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(corpIds)});
       if(r.ok){const names=await r.json();const nm={};names.forEach(n=>nm[n.id]=n.name);d.lpCorpNames=nm;}
-    }catch(e){d.lpCorpNames={};}
+    }catch(e){d.lpCorpNames=d.lpCorpNames||{};}
   }
+  step();
 
-  // 평판(standings) 로딩
+  // ── 5단계: 저널 (제일 느림) ──
   try{
-    showLoading('Loading standings...');
+    const sk=DATA_PFX+idx;
+    const existing=JSON.parse(localStorage.getItem(sk)||'[]');
+    const eids=new Set(existing.map(e=>e.id));
+    let fresh;
+    if(wt==='corp'){
+      fresh=[];
+      for(let div=1;div<=7;div++){
+        const en=await fetchPages(`${ESI}/corporations/${coid}/wallets/${div}/journal/`,token);
+        en.forEach(e=>{e.division=div;e.charName=c.charName;e.charId=cid;});
+        fresh.push(...en);
+      }
+    }else{
+      fresh=await fetchPages(`${ESI}/characters/${cid}/wallet/journal/`,token);
+      fresh.forEach(e=>{e.charName=c.charName;e.charId=cid;});
+    }
+    let added=0;
+    fresh.forEach(e=>{if(!eids.has(e.id)){existing.push(e);added++;}});
+    localStorage.setItem(sk,JSON.stringify(existing));
+    d.journal=existing;d.journalAdded=added;
+  }catch(e){d.journal=d.journal||JSON.parse(localStorage.getItem(DATA_PFX+idx)||'[]');d.journalAdded=0;}
+  step();
+
+  // ── 6단계: 평판 + 이름캐시 (느림, 백그라운드) ──
+  try{
     d.standings=await esiFetch(`${ESI}/characters/${cid}/standings/`,token);
     const agentIds=d.standings.filter(s=>s.from_type==='agent').map(s=>s.from_id);
     const corpStIds=d.standings.filter(s=>s.from_type==='npc_corp').map(s=>s.from_id);
@@ -841,25 +901,24 @@ async function loadCharData(idx,token){
       }
       d.standingNames=nm;
     }else{d.standingNames={};}
-    // 에이전트 ID → corporation_id 조회 (팩션 필터링용)
     d.agentCorpMap={};
     if(agentIds.length){
       const results=await Promise.all(agentIds.map(async id=>{
-        try{const r=await fetch(`${ESI}/characters/${id}/`);if(r.ok){const j=await r.json();return[id,j.corporation_id];}
-        }catch(e){}return[id,null];
+        try{const r=await fetch(`${ESI}/characters/${id}/`);if(r.ok){const j=await r.json();return[id,j.corporation_id];}}catch(e){}return[id,null];
       }));
       results.forEach(([id,corpId])=>{if(corpId)d.agentCorpMap[id]=corpId;});
     }
-  }catch(e){d.standings=[];d.standingNames={};d.agentCorpMap={};}
+  }catch(e){d.standings=d.standings||[];d.standingNames=d.standingNames||{};d.agentCorpMap=d.agentCorpMap||{};}
+  step();
 
-  // 자산/오더 이름 미리 조회 (탭 열 때 빠르게)
+  // ── 7단계: 자산/오더 이름 캐시 ──
   try{
-    showLoading('Pre-loading names...');
     const allTypeIds=[...(d.assets||[]).map(a=>a.type_id),...(d.orders||[]).map(o=>o.type_id)];
     const allLocIds=[...(d.assets||[]).map(a=>a.location_id),...(d.orders||[]).map(o=>o.location_id)];
     await resolveTypeNames([...new Set(allTypeIds)]);
     await resolveLocationNames([...new Set(allLocIds)],token);
   }catch(e){}
+  step();
 
   return d;
 }
@@ -2190,6 +2249,12 @@ updateEveClock();
 function updateRefreshInfo(){
   const el=document.getElementById('refresh-info');
   if(!el)return;
+  if(bgMode){
+    el.textContent='⟳ 데이터 불러오는 중...';
+    el.style.color='var(--accent)';
+    return;
+  }
+  el.style.color='var(--text3)';
   if(bgLoadActive){
     el.textContent='⟳ 백그라운드 갱신 중...';
     return;
@@ -2211,7 +2276,7 @@ async function bgRefreshAllChars(){
   if(!registeredChars.length || bgLoadActive) return;
   bgLoadActive = true;
   bgLoadAbort = false;
-  bgMode = true;
+  setBgMode(true);
   const btn = document.getElementById('btn-refresh');
   if(btn){btn.disabled=true;}
   updateRefreshInfo();
@@ -2231,10 +2296,8 @@ async function bgRefreshAllChars(){
     const charName = registeredChars[i]?.charName || '캐릭';
     setBgRefreshStatus(`${charName} 갱신 중... (${i+1}/${registeredChars.length})`);
     try{
-      charDataCache[i] = await loadCharData(i, t);
-      saveCharCache();
+      await loadCharData(i, t, ()=>{saveCharCache();renderAll();});
       loadedCount++;
-      renderAll();
     } catch(e){
       console.error('BG refresh char', i, e.message);
     }
@@ -2242,7 +2305,7 @@ async function bgRefreshAllChars(){
 
   bgLoadActive = false;
   bgLoadAbort = false;
-  bgMode = false;
+  setBgMode(false);
   autoRefreshCountdown = AUTO_REFRESH_INTERVAL;
   if(btn){btn.disabled=false; btn.textContent='↻ 새로고침';}
   updateRefreshInfo();
@@ -2255,7 +2318,7 @@ async function refreshAllChars(silent=false){
   if(!registeredChars.length) return;
   // 진행 중인 bg 로딩 중단
   if(bgLoadActive){ bgLoadAbort=true; await new Promise(res=>setTimeout(res,200)); }
-  bgMode=false;
+  setBgMode(false);
 
   silentRefresh = silent;
   const btn = document.getElementById('btn-refresh');
@@ -2352,8 +2415,11 @@ async function init(){
     // 기존 캐릭 캐시 복원 후 새 캐릭만 로드
     loadCharCache();
     const t=await getValidToken(myIdx)||tokenData.access_token;
-    try{charDataCache[myIdx]=await loadCharData(myIdx,t);saveCharCache();}
-    catch(e){console.error('New char load error:',e.message);}
+    setBgRefreshStatus(`${charInfo.CharacterName} 로딩 중...`);
+    setBgMode(true);
+    await loadCharData(myIdx,t,()=>{saveCharCache();renderAll();});
+    setBgMode(false);
+    setBgRefreshStatus('등록 완료',true);
     document.getElementById('login-screen').classList.remove('visible');
     document.getElementById('dashboard').style.display='block';
     setStatus(true);renderAll();hideLoading();
@@ -2381,19 +2447,19 @@ async function init(){
     }
     // 1시간 초과 — 백그라운드 순차 갱신
     setTimeout(async()=>{
-      bgMode=true;
+      setBgMode(true);
       const t0=await getValidToken(0);
-      if(!t0){showToast('토큰 만료 — 재로그인이 필요합니다','error');bgMode=false;return;}
+      if(!t0){showToast('토큰 만료 — 재로그인이 필요합니다','error');setBgMode(false);return;}
       const total=registeredChars.length;
       for(let i=0;i<total;i++){
         if(bgLoadAbort)break;
         setBgRefreshStatus(`${registeredChars[i]?.charName||'캐릭'} 갱신 중... (${i+1}/${total})`);
         const t=await getValidToken(i)||t0;
-        try{charDataCache[i]=await loadCharData(i,t);saveCharCache();renderAll();}
+        try{await loadCharData(i,t,()=>{saveCharCache();renderAll();});}
         catch(e){console.error('BG init char',i,e.message);}
-        if(i<total-1)await new Promise(res=>setTimeout(res,1000));
+        if(i<total-1)await new Promise(res=>setTimeout(res,500));
       }
-      bgMode=false;bgLoadAbort=false;
+      setBgMode(false);bgLoadAbort=false;
       setBgRefreshStatus('갱신 완료',true);
       const corpIds=new Set();
       registeredChars.forEach((_,i)=>{charDataCache[i]?.loyaltyPoints?.forEach(l=>{if(CORP_GROUP[l.corporation_id])corpIds.add(l.corporation_id);});});
@@ -2403,7 +2469,7 @@ async function init(){
     return;
   }
 
-  // ── 5. 첫 시작 (캐시 없음) — 전체 로드 ──
+  // ── 5. 첫 시작 (캐시 없음) — 페이지 먼저 띄우고 스트리밍 로드 ──
   showLoading('캐릭터 정보 로딩 중...');
   const freshAccess=await getValidToken(0)||tokenData.access_token;
   let charInfo;
@@ -2418,22 +2484,30 @@ async function init(){
   const myIdx=registeredChars.findIndex(c=>c.charId===charInfo.CharacterID);
   if(myIdx>=0){localStorage.setItem('ewr_tok_'+myIdx,JSON.stringify(tokenData));saveToken(tokenData,'ewr_tok_'+myIdx);}
   localStorage.setItem(CHARS_KEY,JSON.stringify(registeredChars));
-  for(let i=0;i<registeredChars.length;i++){
-    const t=await getValidToken(i)||freshAccess;
-    try{charDataCache[i]=await loadCharData(i,t);saveCharCache();}
-    catch(e){console.error('Char',i,'load error:',e.message);charDataCache[i]={walletBalance:0,assetValue:0,totalLP:0,totalSP:0,orderValue:0,contractValue:0,journal:JSON.parse(localStorage.getItem(DATA_PFX+i)||'[]'),priceMap:{},loyaltyPoints:[],lpCorpNames:{},assets:[],orders:[],contracts:[]};}
-  }
+
+  // 빈 데이터로 즉시 화면 표시
+  registeredChars.forEach((_,i)=>{if(!charDataCache[i])charDataCache[i]={walletBalance:0,assetValue:0,totalLP:0,totalSP:0,orderValue:0,contractValue:0,journal:[],priceMap:{},loyaltyPoints:[],lpCorpNames:{},assets:[],orders:[],contracts:[],standings:[],standingNames:{},agentCorpMap:{}};});
   document.getElementById('login-screen').classList.remove('visible');
   document.getElementById('dashboard').style.display='block';
   setStatus(true);renderAll();hideLoading();
   loadLpPriceCache();initLpDefaults();
-  setTimeout(async()=>{
-    const corpIds=new Set();
-    registeredChars.forEach((_,i)=>{charDataCache[i]?.loyaltyPoints?.forEach(l=>{if(CORP_GROUP[l.corporation_id])corpIds.add(l.corporation_id);});});
-    for(const cid of corpIds)await calcLpRate(cid);
-    recalcTotal();renderLP();
-  },500);
-  showToast(`${registeredChars.length}명 로드 완료`,'success');
+
+  // 캐릭별 순차 스트리밍 로드
+  setBgMode(true);
+  const total=registeredChars.length;
+  for(let i=0;i<total;i++){
+    const t=await getValidToken(i)||freshAccess;
+    const charName=registeredChars[i]?.charName||'캐릭';
+    setBgRefreshStatus(`${charName} 로딩 중... (${i+1}/${total})`);
+    await loadCharData(i,t,()=>{saveCharCache();renderAll();});
+  }
+  setBgMode(false);
+  setBgRefreshStatus('로드 완료',true);
+  // LP 가격 백그라운드 조회
+  const corpIds=new Set();
+  registeredChars.forEach((_,i)=>{charDataCache[i]?.loyaltyPoints?.forEach(l=>{if(CORP_GROUP[l.corporation_id])corpIds.add(l.corporation_id);});});
+  for(const cid of corpIds)await calcLpRate(cid);
+  recalcTotal();renderLP();
   startAutoRefresh();
 }
 
