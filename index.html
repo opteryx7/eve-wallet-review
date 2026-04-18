@@ -351,7 +351,7 @@ const SSO_AUTH='https://login.eveonline.com/v2/oauth/authorize';
 const SSO_TOKEN='https://login.eveonline.com/v2/oauth/token';
 // EVE SSO requires an exact redirect URI match.
 const VERCEL_REDIRECT_ORIGIN='https://eve-wallet-review.vercel.app';
-const CB=`${VERCEL_REDIRECT_ORIGIN.replace(/\/+$/,'')}/`;
+const CB=VERCEL_REDIRECT_ORIGIN.replace(/\/+$/,'');
 // ── LP 시스템 ──
 const LP_SETTINGS_KEY='ewr_lp_settings';
 const LANG_KEY='ewr_lang';
