@@ -800,18 +800,46 @@ function parseJwt(token){
   }catch(e){return null;}
 }
 
-async function handleCallback(){const code=new URLSearchParams(location.search).get('code');if(!code)return false;history.replaceState({},'',location.pathname);walletType=localStorage.getItem('ewr_wt')||'personal';try{const r=await fetch(SSO_TOKEN,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'authorization_code',code,redirect_uri:CB,client_id:CLIENT_ID,code_verifier:sessionStorage.getItem('pkce_v')})});const t=await r.json();if(!r.ok)throw new Error(t.error_description||'Auth failed');saveToken(t,TOKEN_KEY);return true;}catch(e){showToast(e.message,'error');return false;}}
+const ADDING_FLAG_KEY='ewr_adding';
+const ADDING_TOKEN_KEY='ewr_adding_token';
+
+function getMainTokenData(){try{return JSON.parse(localStorage.getItem(TOKEN_KEY)||'null');}catch(e){return null;}}
+function getPendingAddTokenData(){try{return JSON.parse(localStorage.getItem(ADDING_TOKEN_KEY)||'null');}catch(e){return null;}}
+function clearPendingAddState(){localStorage.removeItem(ADDING_FLAG_KEY);localStorage.removeItem(ADDING_TOKEN_KEY);}
+
+async function handleCallback(){
+  const code=new URLSearchParams(location.search).get('code');
+  if(!code)return false;
+  history.replaceState({},'',location.pathname);
+  walletType=localStorage.getItem('ewr_wt')||'personal';
+  try{
+    const r=await fetch(SSO_TOKEN,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'authorization_code',code,redirect_uri:CB,client_id:CLIENT_ID,code_verifier:sessionStorage.getItem('pkce_v')})});
+    const t=await r.json();
+    if(!r.ok)throw new Error(t.error_description||'Auth failed');
+    const isAdding=localStorage.getItem(ADDING_FLAG_KEY)==='1';
+    if(isAdding){
+      t.expires_at=Date.now()+(t.expires_in||1200)*1000;
+      localStorage.setItem(ADDING_TOKEN_KEY,JSON.stringify(t));
+    }else{
+      saveToken(t,TOKEN_KEY);
+    }
+    return true;
+  }catch(e){
+    showToast(e.message||'로그인 실패','error');
+    return false;
+  }
+}
+
 function addCharacter(){
-  // 진행 중인 백그라운드 갱신 중단 및 상태 초기화
   bgLoadAbort=true;
   bgLoadActive=false;
   setBgMode(false);
   setBgRefreshStatus(null);
-  localStorage.setItem('ewr_adding','1');
+  localStorage.setItem(ADDING_FLAG_KEY,'1');
   localStorage.setItem('ewr_wt',walletType);
   startLogin();
 }
-function logout(){localStorage.removeItem(TOKEN_KEY);localStorage.removeItem(CHARS_KEY);localStorage.removeItem(CHAR_CACHE_KEY);for(let i=0;i<10;i++){localStorage.removeItem(DATA_PFX+i);localStorage.removeItem('ewr_tok_'+i);localStorage.removeItem(CHAR_CACHE_KEY+'_a'+i);}registeredChars=[];charDataCache={};document.getElementById('login-screen').classList.add('visible');document.getElementById('dashboard').style.display='none';setStatus(false);}
+function logout(){localStorage.removeItem(TOKEN_KEY);localStorage.removeItem(CHARS_KEY);localStorage.removeItem(CHAR_CACHE_KEY);localStorage.removeItem(ADDING_FLAG_KEY);localStorage.removeItem(ADDING_TOKEN_KEY);for(let i=0;i<10;i++){localStorage.removeItem(DATA_PFX+i);localStorage.removeItem('ewr_tok_'+i);localStorage.removeItem(CHAR_CACHE_KEY+'_a'+i);}registeredChars=[];charDataCache={};document.getElementById('login-screen').classList.add('visible');document.getElementById('dashboard').style.display='none';setStatus(false);}
 
 // ── ESI ──
 async function esiFetch(url,token){const r=await fetch(url,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error(`${r.status}`);return r.json();}
@@ -2387,63 +2415,99 @@ async function init(){
   applyLangUI();
   loadSpPrices();
 
-  // ── 1. EVE SSO 콜백 처리 ──
+  // 1) SSO 콜백
   const code=new URLSearchParams(location.search).get('code');
   if(code){
     document.getElementById('login-screen').classList.add('visible');
     hideLoading();
     const ok=await handleCallback();
-    if(!ok){return;}
-    // login-screen은 각 경로에서 dashboard 표시 시 제거 (여기서 제거 안 함)
+    if(!ok)return;
   }
-
-  // ── 2. 토큰 확인 ──
-  const tokenData=JSON.parse(localStorage.getItem(TOKEN_KEY)||'null');
-  if(!tokenData){document.getElementById('login-screen').classList.add('visible');hideLoading();return;}
 
   walletType=localStorage.getItem('ewr_wt')||'personal';
   registeredChars=JSON.parse(localStorage.getItem(CHARS_KEY)||'[]');
-  const isAdding=localStorage.getItem('ewr_adding')==='1';
-  localStorage.removeItem('ewr_adding');
 
-  // ── 3. 캐릭 추가 콜백: 새 캐릭만 처리 ──
+  const isAdding=localStorage.getItem(ADDING_FLAG_KEY)==='1';
+
+  // 2) 캐릭 추가 콜백 처리
   if(isAdding){
-    // JWT에서 즉시 캐릭터 정보 파싱 (서버 요청 없음)
-    let charInfo=parseJwt(tokenData.access_token);
-    if(!charInfo){
-      // JWT 파싱 실패 시만 SSO_VERIFY 폴백
-      try{charInfo=await esiFetch(SSO_VERIFY,tokenData.access_token);}catch(e){}
+    const pendingTokenData=getPendingAddTokenData();
+    if(!pendingTokenData){
+      showToast('캐릭터 추가 토큰이 없습니다. 다시 시도해주세요.','error');
+      document.getElementById('login-screen').classList.add('visible');
+      hideLoading();
+      return;
     }
-    if(!charInfo){showToast('캐릭터 인증 실패 — 다시 시도해주세요','error');document.getElementById('login-screen').classList.add('visible');return;}
+
+    let charInfo=parseJwt(pendingTokenData.access_token);
+    if(!charInfo){
+      try{charInfo=await esiFetch(SSO_VERIFY,pendingTokenData.access_token);}catch(e){}
+    }
+    if(!charInfo){
+      showToast('캐릭터 인증 실패 — 다시 시도해주세요','error');
+      document.getElementById('login-screen').classList.add('visible');
+      hideLoading();
+      return;
+    }
+
     let corpId=null;
-    if(walletType==='corp'){try{const cd=await esiFetch(`${ESI}/characters/${charInfo.CharacterID}/`,tokenData.access_token);corpId=cd.corporation_id;}catch(e){}}
-    const charEntry={charId:charInfo.CharacterID,charName:charInfo.CharacterName,walletType,corpId,token:tokenData};
+    if(walletType==='corp'){
+      try{const cd=await esiFetch(`${ESI}/characters/${charInfo.CharacterID}/`,pendingTokenData.access_token);corpId=cd.corporation_id;}catch(e){}
+    }
+
+    const charEntry={charId:charInfo.CharacterID,charName:charInfo.CharacterName,walletType,corpId,token:pendingTokenData};
     const existingIdx=registeredChars.findIndex(c=>c.charId===charInfo.CharacterID);
     if(existingIdx>=0)registeredChars[existingIdx]=charEntry;else registeredChars.push(charEntry);
+
     const myIdx=registeredChars.findIndex(c=>c.charId===charInfo.CharacterID);
-    if(myIdx>=0){localStorage.setItem('ewr_tok_'+myIdx,JSON.stringify(tokenData));saveToken(tokenData,'ewr_tok_'+myIdx);}
+    if(myIdx>=0)saveToken(pendingTokenData,'ewr_tok_'+myIdx);
     localStorage.setItem(CHARS_KEY,JSON.stringify(registeredChars));
-    // 기존 캐릭 캐시 복원, 새 캐릭은 빈 데이터로 즉시 화면 표시
+
+    const mainTokenData=getMainTokenData();
+    if(!mainTokenData)saveToken(pendingTokenData,TOKEN_KEY);
+
     loadCharCache();
-    if(!charDataCache[myIdx]) charDataCache[myIdx]={walletBalance:0,assetValue:0,totalLP:0,totalSP:0,orderValue:0,contractValue:0,journal:[],priceMap:{},loyaltyPoints:[],lpCorpNames:{},assets:[],orders:[],contracts:[],standings:[],standingNames:{},agentCorpMap:{}};
+    registeredChars.forEach((_,i)=>{
+      if(!charDataCache[i])charDataCache[i]={walletBalance:0,assetValue:0,totalLP:0,totalSP:0,orderValue:0,contractValue:0,journal:[],priceMap:{},loyaltyPoints:[],lpCorpNames:{},assets:[],orders:[],contracts:[],standings:[],standingNames:{},agentCorpMap:{}};
+    });
+
+    saveCharCache();
+    clearPendingAddState();
+
     document.getElementById('login-screen').classList.remove('visible');
     document.getElementById('dashboard').style.display='block';
     setStatus(true);renderAll();hideLoading();
     loadLpPriceCache();initLpDefaults();
+
+    if(myIdx>=0){
+      setBgMode(true);
+      try{
+        const t=await getValidToken(myIdx)||pendingTokenData.access_token;
+        setBgRefreshStatus(`${registeredChars[myIdx]?.charName||'캐릭'} 로딩 중...`,false);
+        await loadCharData(myIdx,t,()=>{saveCharCache();renderAll();});
+        setBgRefreshStatus('캐릭터 추가 완료',true);
+      }catch(e){
+        console.error('Add char load error:',e);
+        showToast('캐릭터는 추가되었지만 데이터 로딩 중 오류가 발생했습니다.','error');
+      }finally{
+        setBgMode(false);
+      }
+    }
     startAutoRefresh();
-    // 새 캐릭 데이터 백그라운드 스트리밍
-    const t=await getValidToken(myIdx)||tokenData.access_token;
-    setBgRefreshStatus(`${charInfo.CharacterName} 데이터 불러오는 중...`);
-    setBgMode(true);
-    await loadCharData(myIdx,t,()=>{saveCharCache();renderAll();});
-    setBgMode(false);
-    setBgRefreshStatus('등록 완료',true);
     return;
   }
 
-  // ── 4. 일반 시작: 캐시 있으면 즉시 표시 ──
-  const hasCachedData=loadCharCache();
-  if(hasCachedData && registeredChars.length>0){
+  // 3) 일반 로그인/기존 세션
+  const tokenData=getMainTokenData();
+  if(!tokenData){
+    document.getElementById('login-screen').classList.add('visible');
+    hideLoading();
+    return;
+  }
+
+  // 4) 캐시 있으면 즉시 표시
+  loadCharCache();
+  if(registeredChars.length&&Object.keys(charDataCache||{}).length){
     document.getElementById('login-screen').classList.remove('visible');
     document.getElementById('dashboard').style.display='block';
     setStatus(true);renderAll();hideLoading();
@@ -2453,7 +2517,7 @@ async function init(){
     const slim=JSON.parse(localStorage.getItem(CHAR_CACHE_KEY)||'{}');
     const savedAt=Object.values(slim)[0]?._savedAt||0;
     const age=Date.now()-savedAt;
-    if(age < 3600000){
+    if(age<3600000){
       setBgRefreshStatus(`캐시 사용 중 (${Math.round(age/60000)}분 전 갱신)`,true);
       return;
     }
@@ -2481,43 +2545,46 @@ async function init(){
     return;
   }
 
-  // ── 5. 첫 시작 (캐시 없음) — 페이지 먼저 띄우고 스트리밍 로드 ──
+  // 5) 첫 시작 (캐시 없음)
   const freshAccess=await getValidToken(0)||tokenData.access_token;
-  // JWT에서 즉시 캐릭터 정보 파싱 (서버 요청 없음)
   let charInfo=parseJwt(freshAccess);
   if(!charInfo){
     showLoading('캐릭터 확인 중...');
-    try{charInfo=await esiFetch(SSO_VERIFY,freshAccess);}catch(e){showToast('세션 만료 — 다시 로그인해주세요','error');hideLoading();return;}
+    try{charInfo=await esiFetch(SSO_VERIFY,freshAccess);}
+    catch(e){showToast('세션 만료 — 다시 로그인해주세요','error');hideLoading();return;}
   }
+
   let corpId=null;
   if(walletType==='corp'){try{const cd=await esiFetch(`${ESI}/characters/${charInfo.CharacterID}/`,freshAccess);corpId=cd.corporation_id;}catch(e){}}
+
   const charEntry={charId:charInfo.CharacterID,charName:charInfo.CharacterName,walletType,corpId,token:tokenData};
   const existingIdx=registeredChars.findIndex(c=>c.charId===charInfo.CharacterID);
   if(registeredChars.length===0)registeredChars.push(charEntry);
   else if(existingIdx>=0)registeredChars[existingIdx]=charEntry;
   else registeredChars[0]=charEntry;
+
   const myIdx=registeredChars.findIndex(c=>c.charId===charInfo.CharacterID);
-  if(myIdx>=0){localStorage.setItem('ewr_tok_'+myIdx,JSON.stringify(tokenData));saveToken(tokenData,'ewr_tok_'+myIdx);}
+  if(myIdx>=0)saveToken(tokenData,'ewr_tok_'+myIdx);
   localStorage.setItem(CHARS_KEY,JSON.stringify(registeredChars));
 
-  // 빈 데이터로 즉시 화면 표시
-  registeredChars.forEach((_,i)=>{if(!charDataCache[i])charDataCache[i]={walletBalance:0,assetValue:0,totalLP:0,totalSP:0,orderValue:0,contractValue:0,journal:[],priceMap:{},loyaltyPoints:[],lpCorpNames:{},assets:[],orders:[],contracts:[],standings:[],standingNames:{},agentCorpMap:{}};});
+  registeredChars.forEach((_,i)=>{
+    if(!charDataCache[i])charDataCache[i]={walletBalance:0,assetValue:0,totalLP:0,totalSP:0,orderValue:0,contractValue:0,journal:[],priceMap:{},loyaltyPoints:[],lpCorpNames:{},assets:[],orders:[],contracts:[],standings:[],standingNames:{},agentCorpMap:{}};
+  });
+
   document.getElementById('login-screen').classList.remove('visible');
   document.getElementById('dashboard').style.display='block';
   setStatus(true);renderAll();hideLoading();
   loadLpPriceCache();initLpDefaults();
 
-  // 캐릭별 순차 스트리밍 로드
   setBgMode(true);
   const total=registeredChars.length;
   for(let i=0;i<total;i++){
     const t=await getValidToken(i)||freshAccess;
-    const charName=registeredChars[i]?.charName||'캐릭';
-    setBgRefreshStatus(`${charName} 로딩 중... (${i+1}/${total})`);
+    setBgRefreshStatus(`${registeredChars[i]?.charName||'캐릭'} 로딩 중... (${i+1}/${total})`);
     await loadCharData(i,t,()=>{saveCharCache();renderAll();});
   }
   setBgMode(false);
-  setBgRefreshStatus('로드 완료',true);
+  setBgRefreshStatus('로딩 완료',true);
   // LP 가격 백그라운드 조회
   const corpIds=new Set();
   registeredChars.forEach((_,i)=>{charDataCache[i]?.loyaltyPoints?.forEach(l=>{if(CORP_GROUP[l.corporation_id])corpIds.add(l.corporation_id);});});
@@ -2525,7 +2592,6 @@ async function init(){
   recalcTotal();renderLP();
   startAutoRefresh();
 }
-
 document.getElementById('journal-search').addEventListener('input',renderJournal);
 document.getElementById('journal-type-filter').addEventListener('change',renderJournal);
 document.getElementById('asset-search').addEventListener('input',()=>renderAssets());
