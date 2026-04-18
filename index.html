@@ -2390,12 +2390,11 @@ async function init(){
   // ── 1. EVE SSO 콜백 처리 ──
   const code=new URLSearchParams(location.search).get('code');
   if(code){
-    // 검은 화면 방지: 로그인 화면 표시
     document.getElementById('login-screen').classList.add('visible');
     hideLoading();
     const ok=await handleCallback();
     if(!ok){return;}
-    document.getElementById('login-screen').classList.remove('visible');
+    // login-screen은 각 경로에서 dashboard 표시 시 제거 (여기서 제거 안 함)
   }
 
   // ── 2. 토큰 확인 ──
@@ -2415,7 +2414,7 @@ async function init(){
       // JWT 파싱 실패 시만 SSO_VERIFY 폴백
       try{charInfo=await esiFetch(SSO_VERIFY,tokenData.access_token);}catch(e){}
     }
-    if(!charInfo){showToast('캐릭터 인증 실패','error');hideLoading();return;}
+    if(!charInfo){showToast('캐릭터 인증 실패 — 다시 시도해주세요','error');document.getElementById('login-screen').classList.add('visible');return;}
     let corpId=null;
     if(walletType==='corp'){try{const cd=await esiFetch(`${ESI}/characters/${charInfo.CharacterID}/`,tokenData.access_token);corpId=cd.corporation_id;}catch(e){}}
     const charEntry={charId:charInfo.CharacterID,charName:charInfo.CharacterName,walletType,corpId,token:tokenData};
