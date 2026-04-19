@@ -907,14 +907,15 @@ function saveCharSummary(idx,data){
 
 function loadCachedCharData(idx){
   const base=getEmptyCharData(idx);
+  let summary=null;
+  try{
+    summary=JSON.parse(localStorage.getItem(getSummaryKey(idx))||localStorage.getItem(`ewr_summary_${idx}`)||'null');
+  }catch(e){}
   try{
     const snapshot=JSON.parse(localStorage.getItem(getSnapshotKey(idx))||localStorage.getItem(SNAPSHOT_PFX+idx)||'null');
-    if(snapshot)return {...base,...snapshot,journal:base.journal};
+    if(snapshot&&isUsefulCharData(snapshot))return {...base,...summary,...snapshot,journal:base.journal};
   }catch(e){}
-  try{
-    const summary=JSON.parse(localStorage.getItem(getSummaryKey(idx))||'null');
-    if(summary)return {...base,...summary,journal:base.journal,assets:base.assets,orders:base.orders,contracts:base.contracts,priceMap:base.priceMap};
-  }catch(e){}
+  if(summary&&isUsefulCharData(summary))return {...base,...summary,journal:base.journal,assets:base.assets,orders:base.orders,contracts:base.contracts,priceMap:base.priceMap};
   return base;
 }
 
@@ -924,7 +925,7 @@ function hydrateCachedCharData(){
   for(let i=0;i<registeredChars.length;i++){
     const cached=loadCachedCharData(i);
     charDataCache[i]=cached;
-    if((cached.walletBalance||cached.assetValue||cached.totalLP||cached.totalSP||cached.orderValue||cached.contractValue)||(cached.assets&&cached.assets.length)||(cached.orders&&cached.orders.length)||(cached.contracts&&cached.contracts.length)||(cached.journal&&cached.journal.length))hasUsefulCache=true;
+    if(isUsefulCharData(cached))hasUsefulCache=true;
   }
   return hasUsefulCache;
 }
