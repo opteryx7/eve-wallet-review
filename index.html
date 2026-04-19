@@ -354,6 +354,7 @@ const TOKEN_KEY='ewr_token';
 const CHARS_KEY='ewr_chars';
 const DATA_PFX='ewr_j_';
 const SNAPSHOT_PFX='ewr_cache_';
+const FAST_CACHE_KEY='ewr_fast_cache_v1';
 const ESI='https://esi.evetech.net/latest';
 const SSO_AUTH='https://login.eveonline.com/v2/oauth/authorize';
 const SSO_TOKEN='https://login.eveonline.com/v2/oauth/token';
@@ -902,11 +903,44 @@ function saveCharSummary(idx,data){
     agentCorpMap:data.agentCorpMap||{},
     updatedAt:Date.now()
   };
+  saveFastCacheEntry(idx,summary);
   return setStoredJson(getSummaryKey(idx),summary,true);
+}
+
+function loadFastCache(){
+  try{return JSON.parse(localStorage.getItem(FAST_CACHE_KEY)||'{}')||{};}catch(e){return{};}
+}
+
+function saveFastCacheEntry(idx,data){
+  const charId=getCharIdByIndex(idx);
+  if(!charId||!isUsefulCharData(data))return false;
+  const fast=loadFastCache();
+  fast[charId]={
+    walletBalance:data.walletBalance||0,
+    assetValue:data.assetValue||0,
+    totalLP:data.totalLP||0,
+    totalSP:data.totalSP||0,
+    orderValue:data.orderValue||0,
+    contractValue:data.contractValue||0,
+    loyaltyPoints:data.loyaltyPoints||[],
+    lpCorpNames:data.lpCorpNames||{},
+    corpDivisions:data.corpDivisions||null,
+    standings:data.standings||[],
+    standingNames:data.standingNames||{},
+    agentCorpMap:data.agentCorpMap||{},
+    updatedAt:Date.now()
+  };
+  return setStoredJson(FAST_CACHE_KEY,fast,true);
 }
 
 function loadCachedCharData(idx){
   const base=getEmptyCharData(idx);
+  const charId=getCharIdByIndex(idx);
+  let fast=null;
+  if(charId){
+    const fastCache=loadFastCache();
+    fast=fastCache[charId]||null;
+  }
   let summary=null;
   try{
     summary=JSON.parse(localStorage.getItem(getSummaryKey(idx))||localStorage.getItem(`ewr_summary_${idx}`)||'null');
@@ -916,6 +950,7 @@ function loadCachedCharData(idx){
     if(snapshot&&isUsefulCharData(snapshot))return {...base,...summary,...snapshot,journal:base.journal};
   }catch(e){}
   if(summary&&isUsefulCharData(summary))return {...base,...summary,journal:base.journal,assets:base.assets,orders:base.orders,contracts:base.contracts,priceMap:base.priceMap};
+  if(fast&&isUsefulCharData(fast))return {...base,...fast,journal:base.journal,assets:base.assets,orders:base.orders,contracts:base.contracts,priceMap:base.priceMap};
   return base;
 }
 
@@ -983,7 +1018,7 @@ async function getValidToken(idx){
 
 async function handleCallback(){const code=new URLSearchParams(location.search).get('code');if(!code)return false;history.replaceState({},'',location.pathname);walletType=localStorage.getItem('ewr_wt')||'personal';showLoading('Authenticating...');try{const r=await fetch(SSO_TOKEN,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'authorization_code',code,redirect_uri:CB,client_id:CLIENT_ID,code_verifier:sessionStorage.getItem('pkce_v')})});const t=await r.json();if(!r.ok)throw new Error(t.error_description||'Auth failed');saveToken(t,TOKEN_KEY);return true;}catch(e){showToast(e.message,'error');hideLoading();return false;}}
 function addCharacter(){localStorage.setItem('ewr_adding','1');localStorage.setItem('ewr_wt',walletType);startLogin();}
-function logout(){localStorage.removeItem(TOKEN_KEY);localStorage.removeItem(CHARS_KEY);registeredChars.forEach((_,i)=>{localStorage.removeItem(getJournalKey(i));localStorage.removeItem(getSnapshotKey(i));localStorage.removeItem(getSummaryKey(i));localStorage.removeItem(getTokenKey(i));});for(let i=0;i<100;i++){localStorage.removeItem(DATA_PFX+i);localStorage.removeItem(SNAPSHOT_PFX+i);localStorage.removeItem(`ewr_summary_${i}`);localStorage.removeItem('ewr_tok_'+i);}registeredChars=[];charDataCache={};if(autoRefreshInterval)clearInterval(autoRefreshInterval);setSyncStatus('');document.getElementById('login-screen').classList.add('visible');document.getElementById('dashboard').style.display='none';setStatus(false);}
+function logout(){localStorage.removeItem(TOKEN_KEY);localStorage.removeItem(CHARS_KEY);localStorage.removeItem(FAST_CACHE_KEY);registeredChars.forEach((_,i)=>{localStorage.removeItem(getJournalKey(i));localStorage.removeItem(getSnapshotKey(i));localStorage.removeItem(getSummaryKey(i));localStorage.removeItem(getTokenKey(i));});for(let i=0;i<100;i++){localStorage.removeItem(DATA_PFX+i);localStorage.removeItem(SNAPSHOT_PFX+i);localStorage.removeItem(`ewr_summary_${i}`);localStorage.removeItem('ewr_tok_'+i);}registeredChars=[];charDataCache={};if(autoRefreshInterval)clearInterval(autoRefreshInterval);setSyncStatus('');document.getElementById('login-screen').classList.add('visible');document.getElementById('dashboard').style.display='none';setStatus(false);}
 
 // ── ESI ──
 async function esiFetch(url,token){const r=await fetch(url,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error(`${r.status}`);return r.json();}
