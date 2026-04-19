@@ -346,7 +346,10 @@ main{max-width:1440px;margin:0 auto;padding:1.5rem 2rem;}
 </div>
 
 <script>
-const CLIENT_ID='cdadeb67014b4a908d2508028b922448';
+const PROD_CLIENT_ID='cdadeb67014b4a908d2508028b922448';
+const LOCAL_CLIENT_ID='59672041aa5f4c55942a365d63503a0b';
+const IS_LOCAL_TEST=['localhost','127.0.0.1'].includes(window.location.hostname);
+const CLIENT_ID=IS_LOCAL_TEST?LOCAL_CLIENT_ID:PROD_CLIENT_ID;
 const TOKEN_KEY='ewr_token';
 const CHARS_KEY='ewr_chars';
 const DATA_PFX='ewr_j_';
@@ -356,7 +359,8 @@ const SSO_AUTH='https://login.eveonline.com/v2/oauth/authorize';
 const SSO_TOKEN='https://login.eveonline.com/v2/oauth/token';
 // EVE SSO requires an exact redirect URI match.
 const VERCEL_REDIRECT_ORIGIN='https://eve-wallet-review.vercel.app';
-const CB=VERCEL_REDIRECT_ORIGIN.replace(/\/+$/,'');
+const LOCAL_REDIRECT_ORIGIN='http://localhost:8080';
+const CB=(IS_LOCAL_TEST?LOCAL_REDIRECT_ORIGIN:VERCEL_REDIRECT_ORIGIN).replace(/\/+$/,'');
 const AUTO_REFRESH_SECONDS=3600;
 const STORAGE_BUDGET_BYTES=4.5*1024*1024;
 const STORAGE_WARN_RATIO=0.80;
@@ -762,10 +766,24 @@ function setSyncStatus(text=''){
   updateRefreshInfo();
 }
 
+function getCharIdByIndex(idx){return registeredChars[idx]?.charId||registeredChars[idx]?.CharacterID||null;}
+function getJournalKey(idx){const charId=getCharIdByIndex(idx);return charId?`ewr_j_char_${charId}`:DATA_PFX+idx;}
+function getSnapshotKey(idx){const charId=getCharIdByIndex(idx);return charId?`ewr_cache_char_${charId}`:SNAPSHOT_PFX+idx;}
+function getSummaryKey(idx){const charId=getCharIdByIndex(idx);return charId?`ewr_summary_char_${charId}`:`ewr_summary_${idx}`;}
+function getTokenKey(idx){const charId=getCharIdByIndex(idx);return charId?`ewr_tok_char_${charId}`:'ewr_tok_'+idx;}
+
 function getEmptyCharData(idx){
   let journal=[];
-  try{journal=JSON.parse(localStorage.getItem(DATA_PFX+idx)||'[]');}catch(e){}
+  try{
+    journal=JSON.parse(localStorage.getItem(getJournalKey(idx))||localStorage.getItem(DATA_PFX+idx)||'[]');
+  }catch(e){}
   return {walletBalance:0,assetValue:0,totalLP:0,totalSP:0,orderValue:0,contractValue:0,journal,priceMap:{},loyaltyPoints:[],lpCorpNames:{},assets:[],orders:[],contracts:[],standings:[],standingNames:{},agentCorpMap:{}};
+}
+function isUsefulCharData(d){
+  if(!d)return false;
+  return !!((d.walletBalance||d.assetValue||d.totalLP||d.totalSP||d.orderValue||d.contractValue)||
+    (d.assets&&d.assets.length)||(d.orders&&d.orders.length)||(d.contracts&&d.contracts.length)||
+    (d.journal&&d.journal.length)||(d.loyaltyPoints&&d.loyaltyPoints.length)||(d.standings&&d.standings.length));
 }
 function destroyChart(id){if(charts[id]){charts[id].destroy();delete charts[id];}}
 const SP_MIN=5000000; // 5M SP 이하 추출 불가
@@ -860,18 +878,42 @@ function saveToken(t,storageKey){
   return t;
 }
 
-function getSnapshotKey(idx){return SNAPSHOT_PFX+idx;}
-
 function saveCharSnapshot(idx,data){
+  if(!isUsefulCharData(data))return false;
+  saveCharSummary(idx,data);
   const snapshot={...data,journal:undefined};
   return setStoredJson(getSnapshotKey(idx),snapshot,true);
+}
+
+function saveCharSummary(idx,data){
+  if(!isUsefulCharData(data))return false;
+  const summary={
+    walletBalance:data.walletBalance||0,
+    assetValue:data.assetValue||0,
+    totalLP:data.totalLP||0,
+    totalSP:data.totalSP||0,
+    orderValue:data.orderValue||0,
+    contractValue:data.contractValue||0,
+    loyaltyPoints:data.loyaltyPoints||[],
+    lpCorpNames:data.lpCorpNames||{},
+    corpDivisions:data.corpDivisions||null,
+    standings:data.standings||[],
+    standingNames:data.standingNames||{},
+    agentCorpMap:data.agentCorpMap||{},
+    updatedAt:Date.now()
+  };
+  return setStoredJson(getSummaryKey(idx),summary,true);
 }
 
 function loadCachedCharData(idx){
   const base=getEmptyCharData(idx);
   try{
-    const snapshot=JSON.parse(localStorage.getItem(getSnapshotKey(idx))||'null');
+    const snapshot=JSON.parse(localStorage.getItem(getSnapshotKey(idx))||localStorage.getItem(SNAPSHOT_PFX+idx)||'null');
     if(snapshot)return {...base,...snapshot,journal:base.journal};
+  }catch(e){}
+  try{
+    const summary=JSON.parse(localStorage.getItem(getSummaryKey(idx))||'null');
+    if(summary)return {...base,...summary,journal:base.journal,assets:base.assets,orders:base.orders,contracts:base.contracts,priceMap:base.priceMap};
   }catch(e){}
   return base;
 }
@@ -923,8 +965,8 @@ async function refreshToken(tokenObj){
 
 // 만료 여부 확인 후 필요 시 자동 갱신, 갱신된 access_token 반환
 async function getValidToken(idx){
-  const key='ewr_tok_'+idx;
-  let tok=JSON.parse(localStorage.getItem(key)||'null')||registeredChars[idx]?.token;
+  const key=getTokenKey(idx);
+  let tok=JSON.parse(localStorage.getItem(key)||localStorage.getItem('ewr_tok_'+idx)||'null')||registeredChars[idx]?.token;
   if(!tok)return null;
   const expiry=tok.expires_at||0;
   if(Date.now()>expiry-60000){// 만료 1분 전부터 갱신
@@ -932,6 +974,7 @@ async function getValidToken(idx){
     if(fresh){
       fresh.refresh_token=fresh.refresh_token||tok.refresh_token;// refresh_token 유지
       tok=saveToken(fresh,key);
+      setStoredJson('ewr_tok_'+idx,tok);
     }
   }
   return tok?.access_token||null;
@@ -939,7 +982,7 @@ async function getValidToken(idx){
 
 async function handleCallback(){const code=new URLSearchParams(location.search).get('code');if(!code)return false;history.replaceState({},'',location.pathname);walletType=localStorage.getItem('ewr_wt')||'personal';showLoading('Authenticating...');try{const r=await fetch(SSO_TOKEN,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'authorization_code',code,redirect_uri:CB,client_id:CLIENT_ID,code_verifier:sessionStorage.getItem('pkce_v')})});const t=await r.json();if(!r.ok)throw new Error(t.error_description||'Auth failed');saveToken(t,TOKEN_KEY);return true;}catch(e){showToast(e.message,'error');hideLoading();return false;}}
 function addCharacter(){localStorage.setItem('ewr_adding','1');localStorage.setItem('ewr_wt',walletType);startLogin();}
-function logout(){localStorage.removeItem(TOKEN_KEY);localStorage.removeItem(CHARS_KEY);for(let i=0;i<100;i++){localStorage.removeItem(DATA_PFX+i);localStorage.removeItem(getSnapshotKey(i));localStorage.removeItem('ewr_tok_'+i);}registeredChars=[];charDataCache={};if(autoRefreshInterval)clearInterval(autoRefreshInterval);setSyncStatus('');document.getElementById('login-screen').classList.add('visible');document.getElementById('dashboard').style.display='none';setStatus(false);}
+function logout(){localStorage.removeItem(TOKEN_KEY);localStorage.removeItem(CHARS_KEY);registeredChars.forEach((_,i)=>{localStorage.removeItem(getJournalKey(i));localStorage.removeItem(getSnapshotKey(i));localStorage.removeItem(getSummaryKey(i));localStorage.removeItem(getTokenKey(i));});for(let i=0;i<100;i++){localStorage.removeItem(DATA_PFX+i);localStorage.removeItem(SNAPSHOT_PFX+i);localStorage.removeItem(`ewr_summary_${i}`);localStorage.removeItem('ewr_tok_'+i);}registeredChars=[];charDataCache={};if(autoRefreshInterval)clearInterval(autoRefreshInterval);setSyncStatus('');document.getElementById('login-screen').classList.add('visible');document.getElementById('dashboard').style.display='none';setStatus(false);}
 
 // ── ESI ──
 async function esiFetch(url,token){const r=await fetch(url,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error(`${r.status}`);return r.json();}
@@ -954,7 +997,7 @@ async function loadCharData(idx,token){
   try{showLoading('Loading skills...');const sk=await esiFetch(`${ESI}/characters/${cid}/skills/`,token);d.totalSP=sk.total_sp||0;}catch(e){d.totalSP=0;}
   try{showLoading('Loading orders...');d.orders=wt==='corp'?await fetchPages(`${ESI}/corporations/${coid}/orders/`,token):await fetchPages(`${ESI}/characters/${cid}/orders/`,token);d.orderValue=d.orders.filter(o=>!o.is_buy_order).reduce((s,o)=>s+o.price*o.volume_remain,0);}catch(e){d.orders=[];d.orderValue=0;}
   try{showLoading('Loading contracts...');const allC=wt==='corp'?await fetchPages(`${ESI}/corporations/${coid}/contracts/`,token):await fetchPages(`${ESI}/characters/${cid}/contracts/`,token);d.contracts=allC.filter(x=>x.status==='outstanding');d.contractValue=d.contracts.filter(x=>x.type==='item_exchange').reduce((s,x)=>s+(x.price||0),0);}catch(e){d.contracts=[];d.contractValue=0;}
-  try{showLoading('Loading journal...');const sk=DATA_PFX+idx;const existing=JSON.parse(localStorage.getItem(sk)||'[]');const eids=new Set(existing.map(e=>e.id));let fresh;if(wt==='corp'){fresh=[];for(let div=1;div<=7;div++){const en=await fetchPages(`${ESI}/corporations/${coid}/wallets/${div}/journal/`,token);en.forEach(e=>{e.division=div;e.charName=c.charName;e.charId=cid;});fresh.push(...en);}}else{fresh=await fetchPages(`${ESI}/characters/${cid}/wallet/journal/`,token);fresh.forEach(e=>{e.charName=c.charName;e.charId=cid;});}let added=0;fresh.forEach(e=>{if(!eids.has(e.id)){existing.push(e);added++;}});setStoredJson(sk,existing,true);d.journal=existing;d.journalAdded=added;}catch(e){d.journal=JSON.parse(localStorage.getItem(DATA_PFX+idx)||'[]');d.journalAdded=0;}
+  try{showLoading('Loading journal...');const sk=getJournalKey(idx);const existing=JSON.parse(localStorage.getItem(sk)||localStorage.getItem(DATA_PFX+idx)||'[]');const eids=new Set(existing.map(e=>e.id));let fresh;if(wt==='corp'){fresh=[];for(let div=1;div<=7;div++){const en=await fetchPages(`${ESI}/corporations/${coid}/wallets/${div}/journal/`,token);en.forEach(e=>{e.division=div;e.charName=c.charName;e.charId=cid;});fresh.push(...en);}}else{fresh=await fetchPages(`${ESI}/characters/${cid}/wallet/journal/`,token);fresh.forEach(e=>{e.charName=c.charName;e.charId=cid;});}let added=0;fresh.forEach(e=>{if(!eids.has(e.id)){existing.push(e);added++;}});setStoredJson(sk,existing,true);d.journal=existing;d.journalAdded=added;}catch(e){d.journal=JSON.parse(localStorage.getItem(getJournalKey(idx))||localStorage.getItem(DATA_PFX+idx)||'[]');d.journalAdded=0;}
   try{showLoading('Loading market prices...');const prices=await fetch(`${ESI}/markets/prices/`).then(r=>r.json());const pm={};prices.forEach(p=>pm[p.type_id]=p.adjusted_price||p.average_price||0);Object.assign(globalPriceMap,pm);d.assetValue=(d.assets||[]).reduce((s,a)=>s+(pm[a.type_id]||0)*a.quantity,0);d.priceMap=pm;}catch(e){d.assetValue=0;d.priceMap={};}
 
   // LP 팩션 이름 가져오기
@@ -1844,19 +1887,18 @@ function renderCharList(){
 }
 
 function persistCharacterState(nextChars,nextData,nextTokens){
-  for(let i=0;i<100;i++){
-    localStorage.removeItem(DATA_PFX+i);
-    localStorage.removeItem(getSnapshotKey(i));
-    localStorage.removeItem('ewr_tok_'+i);
-  }
   registeredChars=nextChars;
   charDataCache={};
   Object.entries(nextData).forEach(([key,data])=>{
     const idxNum=Number(key);
     charDataCache[idxNum]=data||getEmptyCharData(idxNum);
-    setStoredJson(DATA_PFX+idxNum,charDataCache[idxNum].journal||[],true);
+    setStoredJson(getJournalKey(idxNum),charDataCache[idxNum].journal||[],true);
+    saveCharSummary(idxNum,charDataCache[idxNum]);
     saveCharSnapshot(idxNum,charDataCache[idxNum]);
-    if(nextTokens[idxNum])setStoredJson('ewr_tok_'+idxNum,nextTokens[idxNum]);
+    if(nextTokens[idxNum]){
+      setStoredJson(getTokenKey(idxNum),nextTokens[idxNum]);
+      setStoredJson('ewr_tok_'+idxNum,nextTokens[idxNum]);
+    }
   });
   setStoredJson(CHARS_KEY,registeredChars);
   updateStorageStatus();
@@ -1872,7 +1914,7 @@ function reorderCharacters(fromIdx,targetIdx){
   nextChars.forEach((char,newIdx)=>{
     const oldIdx=registeredChars.findIndex(c=>c.charId===char.charId);
     nextData[newIdx]=charDataCache[oldIdx]||loadCachedCharData(oldIdx);
-    nextTokens[newIdx]=JSON.parse(localStorage.getItem('ewr_tok_'+oldIdx)||'null');
+    nextTokens[newIdx]=JSON.parse(localStorage.getItem(getTokenKey(oldIdx))||localStorage.getItem('ewr_tok_'+oldIdx)||'null');
   });
   persistCharacterState(nextChars,nextData,nextTokens);
   renderAll();
@@ -1887,7 +1929,7 @@ function removeChar(idx){
     const oldIdx=registeredChars.findIndex((c,i)=>i!==idx&&c.charId===char.charId);
     if(oldIdx>=0){
       nextData[newIdx]=charDataCache[oldIdx]||loadCachedCharData(oldIdx);
-      nextTokens[newIdx]=JSON.parse(localStorage.getItem('ewr_tok_'+oldIdx)||'null');
+      nextTokens[newIdx]=JSON.parse(localStorage.getItem(getTokenKey(oldIdx))||localStorage.getItem('ewr_tok_'+oldIdx)||'null');
     }
   });
   persistCharacterState(nextChars,nextData,nextTokens);
@@ -1901,7 +1943,7 @@ function exportData(){
   // 캐릭터별 저널 데이터 포함
   const chars=JSON.parse(localStorage.getItem(CHARS_KEY)||'[]');
   chars.forEach((c,i)=>{
-    const journal=JSON.parse(localStorage.getItem(DATA_PFX+i)||'[]');
+    const journal=JSON.parse(localStorage.getItem(`ewr_j_char_${c.charId}`)||localStorage.getItem(DATA_PFX+i)||'[]');
     payload.characters.push({charId:c.charId,charName:c.charName,journal});
   });
   // 설정 데이터
@@ -1931,7 +1973,7 @@ function importData(input){
         // 현재 등록된 캐릭터 중 charId가 일치하는 것 찾기
         const idx=currentChars.findIndex(c=>c.charId===imported.charId);
         if(idx<0)return; // 이 기기에 없는 캐릭터는 스킵
-        const key=DATA_PFX+idx;
+        const key=`ewr_j_char_${imported.charId}`;
         const existing=JSON.parse(localStorage.getItem(key)||'[]');
         const existingIds=new Set(existing.map(e=>e.id));
         let added=0;
@@ -1949,7 +1991,7 @@ function importData(input){
       loadLpSettings();loadStandingAgentSettings();loadNameCache();
       currentChars.forEach((c,i)=>{
         const d=charDataCache[i];
-        if(d)d.journal=JSON.parse(localStorage.getItem(DATA_PFX+i)||'[]');
+        if(d)d.journal=JSON.parse(localStorage.getItem(getJournalKey(i))||localStorage.getItem(DATA_PFX+i)||'[]');
       });
       renderAll();
     }catch(err){showToast('불러오기 실패: '+err.message,'error');}
@@ -2142,7 +2184,7 @@ function renderStandings(){
   const tm=document.getElementById('table-standing');
   tm.style.width='max-content';
   tm.style.minWidth='unset';
-  tm.style.tableLayout='auto';
+  tm.style.tableLayout='fixed';
   const hasData=registeredChars.some((_,i)=>charDataCache[i]?.standings?.length>0);
   if(!hasData){
     tm.innerHTML='<tbody><tr><td colspan="20" class="empty">평판 데이터 없음 — 재로그인 후 데이터를 갱신해주세요 (새 scope 필요)</td></tr></tbody>';
@@ -2248,13 +2290,19 @@ function renderStandings(){
 
   // 헤더: 팩션 | 콥들 | 에이전트들
   const stAlign='left';
-  const corpThs=corpIds.map(cid=>`<th style="text-align:${stAlign};white-space:nowrap;padding:9px 14px 9px 12px;">${corpNames[cid]||cid}</th>`).join('');
-  const agentThs=agentList.map(n=>`<th style="text-align:${stAlign};font-size:9px;color:var(--text3);max-width:60px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:9px 14px 9px 12px;" title="${n}">${n.split(' ')[0]}<br><span style="font-size:8px;">${n.split(' ').slice(1).join(' ')}</span></th>`).join('');
-  const charHeader=`<th style="text-align:left;padding:9px 14px 9px 12px;">캐릭터</th>`;
+  const htmlEsc=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  const charColW=210;
+  const dataColW=96;
+  const cellPad='9px 10px';
+  const headLabel=v=>`<span title="${htmlEsc(v)}" style="display:block;width:${dataColW-20}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${htmlEsc(v)}</span>`;
+  const dataThStyle=`text-align:${stAlign};width:${dataColW}px;min-width:${dataColW}px;max-width:${dataColW}px;padding:${cellPad};`;
+  const corpThs=corpIds.map(cid=>`<th style="${dataThStyle}">${headLabel(corpNames[cid]||cid)}</th>`).join('');
+  const agentThs=agentList.map(n=>`<th style="${dataThStyle}font-size:10px;color:var(--text3);">${headLabel(n)}</th>`).join('');
+  const charHeader=`<th style="text-align:left;width:${charColW}px;min-width:${charColW}px;max-width:${charColW}px;padding:${cellPad};">캐릭터</th>`;
 
   const thead=`<thead><tr>
     ${charHeader}
-    <th style="text-align:${stAlign};padding:9px 14px 9px 12px;">팩션</th>
+    <th style="${dataThStyle}">${headLabel('팩션')}</th>
     ${corpThs}
     ${agentThs}
   </tr></thead>`;
@@ -2264,19 +2312,20 @@ function renderStandings(){
     .filter(({c})=>!(standingUi.hiddenChars||[]).includes(c.charId));
   const tbody=`<tbody>${visibleChars.map(({c,i})=>{
     const fv=getSt(i,factionId);
-    const charCell=`<td style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;padding:10px 14px 10px 12px;">${c.charName}</td>`;
+    const rowCellStyle=`text-align:${stAlign};width:${dataColW}px;min-width:${dataColW}px;max-width:${dataColW}px;padding:10px 10px;`;
+    const charCell=`<td style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:${charColW}px;min-width:${charColW}px;max-width:${charColW}px;padding:10px 10px;" title="${htmlEsc(c.charName)}">${htmlEsc(c.charName)}</td>`;
     const corpCells=corpIds.map(cid=>{
       const v=getSt(i,cid);
-      return`<td style="text-align:${stAlign};font-weight:600;color:${stColor(v)};padding:10px 14px 10px 12px;">${stFmt(v)}</td>`;
+      return`<td style="${rowCellStyle}font-weight:600;color:${stColor(v)};">${stFmt(v)}</td>`;
     }).join('');
     const agentCells=agentList.map(n=>{
       const id=agentNameToId[n];
       const v=id?getSt(i,id):null;
-      return`<td style="text-align:${stAlign};color:${stColor(v)};padding:10px 14px 10px 12px;">${stFmt(v)}</td>`;
+      return`<td style="${rowCellStyle}color:${stColor(v)};">${stFmt(v)}</td>`;
     }).join('');
     return`<tr>
       ${charCell}
-      <td style="text-align:${stAlign};font-size:15px;font-weight:700;color:${stColor(fv)};padding:10px 14px 10px 12px;">${stFmt(fv)}</td>
+      <td style="${rowCellStyle}font-size:15px;font-weight:700;color:${stColor(fv)};">${stFmt(fv)}</td>
       ${corpCells}
       ${agentCells}
     </tr>`;
@@ -2301,15 +2350,16 @@ let autoRefreshInterval=null;
 function updateRefreshInfo(){
   const el=document.getElementById('refresh-info');
   if(!el)return;
+  const esc=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const parts=[];
   if(registeredChars.length){
     const min=Math.floor(autoRefreshCountdown/60);
     const sec=(autoRefreshCountdown%60).toString().padStart(2,'0');
-    parts.push(`Next refresh ${min}:${sec}`);
+    parts.push(esc(`Next refresh ${min}:${sec}`));
   }
-  if(syncStatusText)parts.push(syncStatusText);
-  if(lastSyncAt)parts.push(`Updated ${new Date(lastSyncAt).toLocaleTimeString()}`);
-  el.textContent=parts.join(' | ');
+  if(syncStatusText)parts.push(`<span style="color:var(--accent3);font-weight:800;text-shadow:0 0 10px rgba(0,255,153,.45);">${esc(syncStatusText)}</span>`);
+  if(lastSyncAt)parts.push(esc(`Updated ${new Date(lastSyncAt).toLocaleTimeString()}`));
+  el.innerHTML=parts.join(' <span style="color:var(--text3);">|</span> ');
 }
 
 async function refreshAllChars(silent=false,reason='manual'){
@@ -2329,12 +2379,17 @@ async function refreshAllChars(silent=false,reason='manual'){
       const c=registeredChars[i];
       if(silent)setSyncStatus(`${reason==='auto'?'Auto refresh':'Background sync'} ${i+1}/${registeredChars.length} | ${c.charName}`);
       const t=await getValidToken(i);
-      if(!t)continue;
-      try{
-        charDataCache[i]=await loadCharData(i,t);
-        saveCharSnapshot(i,charDataCache[i]);
-        if(silent)renderAll();
-      }catch(e){
+    if(!t)continue;
+    try{
+      const loaded=await loadCharData(i,t);
+      if(isUsefulCharData(loaded)||!isUsefulCharData(charDataCache[i])){
+        charDataCache[i]=loaded;
+        if(isUsefulCharData(loaded))saveCharSnapshot(i,loaded);
+      }else{
+        console.warn('Keeping existing cache for char',i,'because refreshed data looked empty.');
+      }
+      if(silent)renderAll();
+    }catch(e){
         console.error('Refresh char',i,e.message);
         if(!charDataCache[i])charDataCache[i]=loadCachedCharData(i);
       }
@@ -2366,8 +2421,13 @@ async function refreshCharAtIndex(idx,silent=false,reason='single'){
     if(silent)setSyncStatus(`Background sync | ${c.charName}`);
     const t=await getValidToken(idx);
     if(!t)return;
-    charDataCache[idx]=await loadCharData(idx,t);
-    saveCharSnapshot(idx,charDataCache[idx]);
+    const loaded=await loadCharData(idx,t);
+    if(isUsefulCharData(loaded)||!isUsefulCharData(charDataCache[idx])){
+      charDataCache[idx]=loaded;
+      if(isUsefulCharData(loaded))saveCharSnapshot(idx,loaded);
+    }else{
+      console.warn('Keeping existing cache for char',idx,'because refreshed data looked empty.');
+    }
     lastSyncAt=Date.now();
     renderAll();
     if(document.getElementById('page-standing').style.display!=='none')renderStandings();
@@ -2430,14 +2490,14 @@ async function init(){
   else{if(registeredChars.length===0)registeredChars.push(charEntry);else if(existingIdx>=0)registeredChars[existingIdx]=charEntry;else registeredChars[0]=charEntry;}
   // 현재 로그인한 캐릭 토큰을 인덱스별로 개별 저장
   const myIdx=registeredChars.findIndex(c=>c.charId===charInfo.CharacterID);
-  if(myIdx>=0)localStorage.setItem('ewr_tok_'+myIdx,JSON.stringify(tokenData));
+  if(myIdx>=0){setStoredJson(getTokenKey(myIdx),tokenData);setStoredJson('ewr_tok_'+myIdx,tokenData);}
   localStorage.setItem(CHARS_KEY,JSON.stringify(registeredChars));
   // 현재 로그인 캐릭 토큰 저장 (만료시각 포함)
-  if(myIdx>=0){const existing=JSON.parse(localStorage.getItem('ewr_tok_'+myIdx)||'null');if(!existing?.expires_at)saveToken(tokenData,'ewr_tok_'+myIdx);}
+  if(myIdx>=0){const existing=JSON.parse(localStorage.getItem(getTokenKey(myIdx))||localStorage.getItem('ewr_tok_'+myIdx)||'null');if(!existing?.expires_at)saveToken(tokenData,getTokenKey(myIdx));}
   for(let i=0;i<registeredChars.length;i++){
     const t=await getValidToken(i)||tokenData.access_token;
     try{charDataCache[i]=await loadCharData(i,t);}
-    catch(e){console.error('Char',i,'load error:',e.message);charDataCache[i]={walletBalance:0,assetValue:0,totalLP:0,totalSP:0,orderValue:0,contractValue:0,journal:JSON.parse(localStorage.getItem(DATA_PFX+i)||'[]'),priceMap:{},loyaltyPoints:[],lpCorpNames:{},assets:[],orders:[],contracts:[]};}
+    catch(e){console.error('Char',i,'load error:',e.message);charDataCache[i]=getEmptyCharData(i);}
   }
   document.getElementById('login-screen').classList.remove('visible');
   document.getElementById('dashboard').style.display='block';
@@ -2514,11 +2574,11 @@ async function initEnhanced(){
     else registeredChars[0]=charEntry;
   }
   const myIdx=registeredChars.findIndex(c=>c.charId===charInfo.CharacterID);
-  if(myIdx>=0)setStoredJson('ewr_tok_'+myIdx,tokenData);
+  if(myIdx>=0){setStoredJson(getTokenKey(myIdx),tokenData);setStoredJson('ewr_tok_'+myIdx,tokenData);}
   setStoredJson(CHARS_KEY,registeredChars);
   if(myIdx>=0){
-    const existing=JSON.parse(localStorage.getItem('ewr_tok_'+myIdx)||'null');
-    if(!existing?.expires_at)saveToken(tokenData,'ewr_tok_'+myIdx);
+    const existing=JSON.parse(localStorage.getItem(getTokenKey(myIdx))||localStorage.getItem('ewr_tok_'+myIdx)||'null');
+    if(!existing?.expires_at)saveToken(tokenData,getTokenKey(myIdx));
   }
   const hasCachedData=hydrateCachedCharData();
   document.getElementById('login-screen').classList.remove('visible');
