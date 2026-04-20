@@ -662,6 +662,7 @@ function fmtISK(v){if(v===null||v===undefined)return'—';const a=Math.abs(v),s=
 function fmtNum(v){return v?Math.round(v).toLocaleString():'0';}
 let silentRefresh=false;
 let refreshInFlight=false;
+const charSyncInFlight=new Set();
 let syncStatusText='';
 let lastSyncAt=0;
 let storageStatusText='';
@@ -1116,9 +1117,14 @@ function renderCharBreakdown(){
     const net=w+a+lp+sp;
     let divRows='';
     if(c.walletType==='corp'&&d.corpDivisions)divRows=d.corpDivisions.map(dv=>`<div class="cr"><span class="crl">Division ${dv.division}</span><span class="crv">${fmtISK(dv.balance)} ISK</span></div>`).join('');
+    const isSyncing=charSyncInFlight.has(i);
+    const charRefreshBtn=isSyncing
+      ?`<button disabled title="동기화 중..." style="margin-left:auto;background:transparent;border:1px solid var(--accent3);border-radius:3px;color:var(--accent3);font-size:13px;width:26px;height:26px;cursor:default;flex-shrink:0;"><span style="display:inline-block;animation:spin .8s linear infinite;">↻</span></button>`
+      :`<button onclick="refreshCharBackground(${i})" title="캐릭터 새로고침" style="margin-left:auto;background:transparent;border:1px solid var(--border);border-radius:3px;color:var(--text3);font-size:13px;width:26px;height:26px;cursor:pointer;transition:all .2s;flex-shrink:0;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text3)'">↻</button>`;
     return`<div class="cc">
       <div class="cch"><img class="cp" src="https://images.evetech.net/characters/${c.charId}/portrait?size=64" onerror="this.style.background='var(--bg3)'">
         <div><div class="ccn">${c.charName}</div><div class="cct">${c.walletType==='corp'?'CORP · ':''} ${fmtISK(net)} ISK</div></div>
+        ${charRefreshBtn}
       </div>
       <div class="ccb">
         <div class="cr"><span class="crl">지갑</span><span class="crv g">${fmtISK(w)} ISK</span></div>
@@ -2440,6 +2446,38 @@ async function refreshCharAtIndex(idx,silent=false,reason='single'){
     updateRefreshInfo();
     if(!silent)hideLoading();
     if(!silent&&btn){btn.disabled=false;btn.textContent='Refresh';}
+  }
+}
+
+async function refreshCharBackground(idx){
+  if(idx<0||idx>=registeredChars.length)return;
+  if(charSyncInFlight.has(idx))return;
+  const c=registeredChars[idx];
+  charSyncInFlight.add(idx);
+  renderCharBreakdown();
+  setSyncStatus(`Background sync | ${c.charName}`);
+  const prevSilent=silentRefresh;
+  silentRefresh=true;
+  try{
+    const t=await getValidToken(idx);
+    if(!t)return;
+    const loaded=await loadCharData(idx,t);
+    if(isUsefulCharData(loaded)||!isUsefulCharData(charDataCache[idx])){
+      charDataCache[idx]=loaded;
+      if(isUsefulCharData(loaded))saveCharSnapshot(idx,loaded);
+    }
+    lastSyncAt=Date.now();
+    renderAll();
+    if(document.getElementById('page-standing').style.display!=='none')renderStandings();
+  }catch(e){
+    console.error('refreshCharBackground',idx,e.message);
+    if(!charDataCache[idx])charDataCache[idx]=loadCachedCharData(idx);
+  }finally{
+    silentRefresh=prevSilent;
+    charSyncInFlight.delete(idx);
+    setSyncStatus('');
+    updateRefreshInfo();
+    renderCharBreakdown();
   }
 }
 
