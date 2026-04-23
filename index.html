@@ -185,7 +185,8 @@ main{max-width:1440px;margin:0 auto;padding:1.5rem 2rem;}
     <button class="nav-tab" onclick="switchPage('assets')">자산</button>  
     <button class="nav-tab" onclick="switchPage('journal')">저널</button>  
     <button class="nav-tab" onclick="switchPage('orders')">오더 & 계약</button>  
-    <button class="nav-tab" onclick="switchPage('lp')">LP</button>  
+    <button class="nav-tab" onclick="switchPage('lp')">LP</button>
+    <button class="nav-tab" onclick="switchPage('skills')">스킬</button>
   </div>    <!-- ── OVERVIEW ── -->    <div id="page-overview">  
     <div class="hero" style="margin-bottom:1.25rem;">  
         <div class="hero-lbl" id="lbl-total-portfolio">총 포트폴리오 가치</div>  
@@ -296,10 +297,22 @@ main{max-width:1440px;margin:0 auto;padding:1.5rem 2rem;}
       <div class="sub-tabs" id="lp-char-tabs" style="margin-bottom:0;"></div>  
       <button onclick="toggleLpEdit()" id="lp-edit-btn" style="background:transparent;border:1px solid var(--border2);border-radius:4px;color:var(--accent2);font-size:12px;padding:4px 12px;cursor:pointer;white-space:nowrap;">ISK/LP 편집</button>  
     </div>  
-    <div id="lp-content"></div>  
-    <!-- 편집 모달 오버레이 -->  
-    <div id="lp-edit-modal" onclick="if(event.target===this)toggleLpEdit()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:200;align-items:center;justify-content:center;"></div>  
-  </div>  </div><!-- /dashboard -->  
+    <div id="lp-content"></div>
+    <!-- 편집 모달 오버레이 -->
+    <div id="lp-edit-modal" onclick="if(event.target===this)toggleLpEdit()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:200;align-items:center;justify-content:center;"></div>
+  </div>
+  <!-- ── SKILLS ── -->
+  <div id="page-skills" style="display:none;">
+    <div class="sub-tabs" id="skill-char-tabs" style="margin-bottom:1rem;"></div>
+    <div id="skill-summary"></div>
+    <div style="margin-bottom:0.75rem;">
+      <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--text2);user-select:none;">
+        <input type="checkbox" id="chk-trained-only" onchange="renderSkills()"> 배운 스킬만 표기
+      </label>
+    </div>
+    <div id="skill-list"></div>
+  </div>
+  </div><!-- /dashboard -->  
 </main>  
 </div>  <script>  
 const PROD_CLIENT_ID='cdadeb67014b4a908d2508028b922448';  
@@ -324,7 +337,13 @@ const STORAGE_CRITICAL_RATIO=0.95;
 // ── LP 시스템 ──  
 const LP_SETTINGS_KEY='ewr_lp_settings';  
 const LANG_KEY='ewr_lang';  
-const MISSION_ISK_PER_LP=210;  
+const MISSION_ISK_BASE=248.016; // base ISK/LP ratio (no skills) = 206.68 × 1.50/1.25
+const SKILL_DIPLOMACY=3357;
+const SKILL_CONNECTIONS=3359;
+const SKILL_CRIMINAL_CONNECTIONS=3361;
+const SKILL_NEGOTIATIONS=3356;
+const SKILL_SECURITY_CONNECTIONS=3895;
+const SKILL_SOCIAL=3355;
 const DEFAULT_LP_RATE=1000;  
 // 팩션그룹 → NET Resonator 이름  
 const NET_RESONATOR={  
@@ -440,15 +459,24 @@ const CORP_GROUP={
   1000134:'blood',     // Blood Raiders  
   1000128:'mordu',     // Mordu's Legion Command  
 };  
-const FACTION_IDS={guristas:500010,sansha:500019,blood:500012,serpentis:500020,angel:500011,mordu:500018};  
-const FACTION_NAMES={guristas:"Guristas Pirates",sansha:"Sansha's Nation",blood:"Blood Raider Covenant",serpentis:"Serpentis",angel:"Angel Cartel",mordu:"Mordu's Legion"};  
+const FACTION_IDS={guristas:500010,sansha:500019,blood:500012,serpentis:500020,angel:500011,mordu:500018};
+const FACTION_NAMES={guristas:"Guristas Pirates",sansha:"Sansha's Nation",blood:"Blood Raider Covenant",serpentis:"Serpentis",angel:"Angel Cartel",mordu:"Mordu's Legion"};
+const PIRATE_GROUPS=new Set(['guristas','sansha','blood','serpentis','angel']);
 const STANDING_AGENT_KEY='ewr_standing_agents';  
 const STANDING_UI_KEY='ewr_standing_ui';  
-let standingAgentSettings={}; // grp->{order:[name,...],hidden:[name,...]}  
-let standingUi={showCharFilters:false,hiddenChars:[]};  
-let activeStandingFaction=null;  
-let dragSrcIdx=null;  
-let charDragSrcIdx=null;  
+let standingAgentSettings={};
+let standingUi={showCharFilters:false,hiddenChars:[]};
+let activeStandingFaction=null;
+let dragSrcIdx=null;
+let charDragSrcIdx=null;
+const STANDING_MEMO_KEY='ewr_standing_memos';
+let standingMemos={};
+let standingSort={col:null,dir:'asc'};
+let standingDefaultSort='lowest';
+let collapsedStations=new Set();
+let activeSkillChar=0;
+let skillCollapsed={};
+let eveAllSkillGroups=null;  
   
 function loadStandingAgentSettings(){try{standingAgentSettings=JSON.parse(localStorage.getItem(STANDING_AGENT_KEY)||'{}');}catch(e){}}  
 function saveStandingAgentSettings(){localStorage.setItem(STANDING_AGENT_KEY,JSON.stringify(standingAgentSettings));}  
@@ -734,7 +762,7 @@ function getEmptyCharData(idx){
   try{  
     journal=JSON.parse(localStorage.getItem(getJournalKey(idx))||localStorage.getItem(DATA_PFX+idx)||'[]');  
   }catch(e){}  
-  return {walletBalance:0,assetValue:0,totalLP:0,totalSP:0,orderValue:0,contractValue:0,journal,priceMap:{},loyaltyPoints:[],lpCorpNames:{},assets:[],orders:[],contracts:[],standings:[],standingNames:{},agentCorpMap:{}};  
+  return {walletBalance:0,assetValue:0,totalLP:0,totalSP:0,unallocated_sp:0,skills:[],orderValue:0,contractValue:0,journal,priceMap:{},loyaltyPoints:[],lpCorpNames:{},assets:[],orders:[],contracts:[],standings:[],standingNames:{},agentCorpMap:{}};  
 }  
 function isUsefulCharData(d){  
   if(!d)return false;  
@@ -774,6 +802,37 @@ function getSpValue(sp){
   return injectors*netPerInjector;  
 }  
   
+// ── SKILL / STANDING HELPERS ──
+function getCharSkillLevel(charIdx,skillId){return charDataCache[charIdx]?.skills?.find(s=>s.skill_id===skillId)?.trained_skill_level||0;}
+function getMissionIskPerLP(charIdx){const neg=getCharSkillLevel(charIdx,SKILL_NEGOTIATIONS);const sc=getCharSkillLevel(charIdx,SKILL_SECURITY_CONNECTIONS);return MISSION_ISK_BASE*(1+0.05*neg)/(1+0.10*sc);}
+function applyStandingBonus(raw,charIdx,isPirate){if(raw===null||raw===undefined)return null;if(raw<0){const lv=getCharSkillLevel(charIdx,SKILL_DIPLOMACY);if(!lv)return raw;return((10-raw)*lv*0.04)+raw;}else{const lv=getCharSkillLevel(charIdx,isPirate?SKILL_CRIMINAL_CONNECTIONS:SKILL_CONNECTIONS);if(!lv)return raw;return((10-raw)*lv*0.04)+raw;}}
+function estimateLPFromRewards(rewardEntries){let tot=0;rewardEntries.forEach(e=>{const ci=registeredChars.findIndex(c=>c.charName===e.charName);const isk=parseFloat(e.amount||0)+parseFloat(e.tax||0);tot+=isk/getMissionIskPerLP(ci>=0?ci:0);});return tot;}
+function charPortraitImg(charName,size=24){const id=registeredChars.find(c=>c.charName===charName)?.charId;if(!id)return'';return`<img src="https://images.evetech.net/characters/${id}/portrait?size=32" style="width:${size}px;height:${size}px;border-radius:50%;flex-shrink:0;margin-right:4px;vertical-align:middle;" onerror="this.style.display='none'">`;}
+function loadStandingMemos(){try{standingMemos=JSON.parse(localStorage.getItem(STANDING_MEMO_KEY)||'{}');}catch(e){standingMemos={};}}
+function saveStandingMemo(agentName,text){standingMemos[agentName]=text;localStorage.setItem(STANDING_MEMO_KEY,JSON.stringify(standingMemos));}
+function setStandingColSort(col){if(standingSort.col===col){standingSort.dir=standingSort.dir==='asc'?'desc':'asc';}else{standingSort.col=col;standingSort.dir='asc';}renderStandings();}
+function setStandingDefaultSort(mode){standingDefaultSort=mode;standingSort.col=null;renderStandings();}
+async function fetchSkillCategories(skillIds){if(!nameCache.skillGroups)nameCache.skillGroups={};if(!nameCache.groups)nameCache.groups={};const missing=[...new Set(skillIds)].filter(id=>!nameCache.skillGroups[id]);if(!missing.length)return;const results=await Promise.all(missing.map(id=>fetch(`${ESI}/universe/types/${id}/`).then(r=>r.ok?r.json():null).catch(()=>null)));const gids=new Set();results.forEach(t=>{if(t?.type_id&&t?.group_id){nameCache.skillGroups[t.type_id]=t.group_id;gids.add(t.group_id);}});const missingG=[...gids].filter(id=>!nameCache.groups[id]);if(missingG.length){const gr=await Promise.all(missingG.map(id=>fetch(`${ESI}/universe/groups/${id}/`).then(r=>r.ok?r.json():null).catch(()=>null)));gr.forEach(g=>{if(g?.group_id&&g?.name)nameCache.groups[g.group_id]=g.name;});}saveNameCache();}
+function lvRoman(n){return['','I','II','III','IV','V'][n]||String(n);}
+function lvColor(n){return n===5?'var(--gold)':n>=1?'var(--accent3)':'var(--text3)';}
+async function fetchAllEveSkillGroups(){
+  if(eveAllSkillGroups)return eveAllSkillGroups;
+  try{
+    const cr=await fetch(`${ESI}/universe/categories/16/`);
+    if(!cr.ok)throw new Error();
+    const cat=await cr.json();
+    const gids=cat.groups||[];
+    const gs=await Promise.all(gids.map(async gid=>{
+      try{const r=await fetch(`${ESI}/universe/groups/${gid}/`);if(!r.ok)return null;const g=await r.json();return g.published?{id:gid,name:g.name,types:g.types||[]}:null;}
+      catch(e){return null;}
+    }));
+    const result={};
+    gs.filter(Boolean).forEach(g=>{result[g.id]={name:g.name,types:g.types};});
+    eveAllSkillGroups=result;
+  }catch(e){console.warn('fetchAllEveSkillGroups failed',e);eveAllSkillGroups={};}
+  return eveAllSkillGroups;
+}
+
 function refTag(ref){const m={bounty_prizes:['bounty','BOUNTY'],agent_mission_reward:['mission','MISSION'],agent_mission_time_bonus_reward:['bonus','BONUS'],bounty_prizes_tax:['bounty','BOUNTY TAX'],agent_mission_reward_tax:['mission','MISSION TAX'],agent_mission_time_bonus_reward_tax:['bonus','BONUS TAX'],market_transaction:['market','MARKET'],contract_price:['contract','CONTRACT'],contract_reward:['contract','CONTRACT'],player_donation:['other','DONATION'],daily_goal_payouts:['other','DAILY']};const[c,l]=m[ref]||['other',ref?(ref.replace(/_/g,' ').slice(0,14).toUpperCase()):'?'];return`<span class="tag ${c}">${l}</span>`;}  
   
 // ── NAME RESOLUTION ──  
@@ -854,9 +913,11 @@ function saveCharSummary(idx,data){
     loyaltyPoints:data.loyaltyPoints||[],  
     lpCorpNames:data.lpCorpNames||{},  
     corpDivisions:data.corpDivisions||null,  
-    standings:data.standings||[],  
-    standingNames:data.standingNames||{},  
-    agentCorpMap:data.agentCorpMap||{},  
+    standings:data.standings||[],
+    standingNames:data.standingNames||{},
+    agentCorpMap:data.agentCorpMap||{},
+    skills:data.skills||[],
+    unallocated_sp:data.unallocated_sp||0,
     updatedAt:Date.now()  
   };  
   return setStoredJson(getSummaryKey(idx),summary,true);  
@@ -951,7 +1012,7 @@ async function loadCharData(idx,token){
   try{if(wt==='corp'){showLoading('Loading corp wallet...');const divs=await esiFetch(`${ESI}/corporations/${coid}/wallets/`,token);d.walletBalance=divs.reduce((s,x)=>s+x.balance,0);d.corpDivisions=divs;}else{showLoading('Loading wallet...');d.walletBalance=await esiFetch(`${ESI}/characters/${cid}/wallet/`,token);}}catch(e){console.warn(`[Wallet] char ${idx} (${c.charName}) 실패:`,e.message);d.walletBalance=0;}  
   try{showLoading('Loading assets...');d.assets=wt==='corp'?await fetchPages(`${ESI}/corporations/${coid}/assets/`,token):await fetchPages(`${ESI}/characters/${cid}/assets/`,token);}catch(e){d.assets=[];}  
   try{showLoading('Loading LP...');const lp=await esiFetch(`${ESI}/characters/${cid}/loyalty/points/`,token);d.loyaltyPoints=lp;d.totalLP=lp.reduce((s,x)=>s+x.loyalty_points,0);}catch(e){d.loyaltyPoints=[];d.totalLP=0;}  
-  try{showLoading('Loading skills...');const sk=await esiFetch(`${ESI}/characters/${cid}/skills/`,token);d.totalSP=sk.total_sp||0;}catch(e){d.totalSP=0;}  
+  try{showLoading('Loading skills...');const sk=await esiFetch(`${ESI}/characters/${cid}/skills/`,token);d.totalSP=sk.total_sp||0;d.unallocated_sp=sk.unallocated_sp||0;d.skills=sk.skills||[];if(d.skills.length){try{await resolveTypeNames(d.skills.map(s=>s.skill_id));}catch(e){}}}catch(e){d.totalSP=0;d.unallocated_sp=0;d.skills=[];}  
   try{showLoading('Loading orders...');d.orders=wt==='corp'?await fetchPages(`${ESI}/corporations/${coid}/orders/`,token):await fetchPages(`${ESI}/characters/${cid}/orders/`,token);d.orderValue=d.orders.filter(o=>!o.is_buy_order).reduce((s,o)=>s+o.price*o.volume_remain,0);}catch(e){d.orders=[];d.orderValue=0;}  
   try{showLoading('Loading contracts...');const allC=wt==='corp'?await fetchPages(`${ESI}/corporations/${coid}/contracts/`,token):await fetchPages(`${ESI}/characters/${cid}/contracts/`,token);d.contracts=allC.filter(x=>x.status==='outstanding');d.contractValue=d.contracts.filter(x=>x.type==='item_exchange').reduce((s,x)=>s+(x.price||0),0);}catch(e){d.contracts=[];d.contractValue=0;}  
   try{showLoading('Loading journal...');const sk=getJournalKey(idx);const existing=JSON.parse(localStorage.getItem(sk)||localStorage.getItem(DATA_PFX+idx)||'[]');const eids=new Set(existing.map(e=>e.id));let fresh;if(wt==='corp'){fresh=[];for(let div=1;div<=7;div++){const en=await fetchPages(`${ESI}/corporations/${coid}/wallets/${div}/journal/`,token);en.forEach(e=>{e.division=div;e.charName=c.charName;e.charId=cid;});fresh.push(...en);}}else{fresh=await fetchPages(`${ESI}/characters/${cid}/wallet/journal/`,token);fresh.forEach(e=>{e.charName=c.charName;e.charId=cid;});}let added=0;fresh.forEach(e=>{if(!eids.has(e.id)){existing.push(e);added++;}});setStoredJson(sk,existing,true);d.journal=existing;d.journalAdded=added;}catch(e){d.journal=JSON.parse(localStorage.getItem(getJournalKey(idx))||localStorage.getItem(DATA_PFX+idx)||'[]');d.journalAdded=0;}  
@@ -1049,9 +1110,9 @@ function recalc30Income(){
   registeredChars.forEach((ch,i)=>{  
     const d=charDataCache[i];if(!d?.journal)return;  
     const jf=filterByPeriod(d.journal,30);  
-    const mISK=jf.filter(e=>e.ref_type==='agent_mission_reward').reduce((s,e)=>s+parseFloat(e.amount||0)+parseFloat(e.tax||0),0);  
-    const mainCid=lpMainFaction[ch.charId];  
-    estLP+=mISK/MISSION_ISK_PER_LP*getLpRate(mainCid||0);  
+    const mISK=jf.filter(e=>e.ref_type==='agent_mission_reward').reduce((s,e)=>s+parseFloat(e.amount||0)+parseFloat(e.tax||0),0);
+    const mainCid=lpMainFaction[ch.charId];
+    estLP+=(mISK/getMissionIskPerLP(i))*getLpRate(mainCid||0);  
   });  
   const total30=totalInc+estLP;  
   const el=document.getElementById('hero-income30');  
@@ -1188,27 +1249,25 @@ function renderMission(){
   const totalISK=iskEntries.reduce((s,e)=>s+e.amount,0);  
   const totalMissions=countedMissions.length;  
   const isNonStoryliner=e=>!storylineSet.has(extractAgentName(e.description));  
-  const rawMissionRewardISK=entries30  
-    .filter(e=>e.ref_type==='agent_mission_reward'&&parseFloat(e.amount||0)>0&&isNonStoryliner(e))  
-    .reduce((s,e)=>s+parseFloat(e.amount||0)+parseFloat(e.tax||0),0);  
-  const totalEstLP=rawMissionRewardISK/MISSION_ISK_PER_LP;  
-  let mainRate=DEFAULT_LP_RATE;  
-  if(registeredChars.length){  
-    const mainCid=lpMainFaction[registeredChars[0].charId];  
-    if(mainCid)mainRate=getLpRate(mainCid);  
-  }  
-  const totalEstLPVal=totalEstLP*mainRate;  
-  
-  function calcPeriodProfit(days){  
-    const allJ=getAllJournal();  
-    const src=days?filterByPeriod(allJ,days):allJ;  
-    let pe=src;  
-    if(activeMissionChar!=='all')pe=pe.filter(e=>e.charName===activeMissionChar);  
-    const {iskEntries:ie}=analyzeMissions(pe);  
-    const pISK=ie.reduce((s,e)=>s+e.amount,0);  
-    const pMReward=pe.filter(e=>e.ref_type==='agent_mission_reward'&&parseFloat(e.amount||0)>0&&isNonStoryliner(e))  
-      .reduce((s,e)=>s+parseFloat(e.amount||0)+parseFloat(e.tax||0),0);  
-    return pISK+(pMReward/MISSION_ISK_PER_LP)*mainRate;  
+  const rewardEntries30=entries30.filter(e=>e.ref_type==='agent_mission_reward'&&parseFloat(e.amount||0)>0&&isNonStoryliner(e));
+  const totalEstLP=estimateLPFromRewards(rewardEntries30);
+  let mainRate=DEFAULT_LP_RATE;
+  if(registeredChars.length){
+    const ci=activeMissionChar!=='all'?registeredChars.findIndex(c=>c.charName===activeMissionChar):0;
+    const mainCid=lpMainFaction[registeredChars[ci>=0?ci:0]?.charId];
+    if(mainCid)mainRate=getLpRate(mainCid);
+  }
+  const totalEstLPVal=totalEstLP*mainRate;
+
+  function calcPeriodProfit(days){
+    const allJ=getAllJournal();
+    const src=days?filterByPeriod(allJ,days):allJ;
+    let pe=src;
+    if(activeMissionChar!=='all')pe=pe.filter(e=>e.charName===activeMissionChar);
+    const {iskEntries:ie}=analyzeMissions(pe);
+    const pISK=ie.reduce((s,e)=>s+e.amount,0);
+    const pRewards=pe.filter(e=>e.ref_type==='agent_mission_reward'&&parseFloat(e.amount||0)>0&&isNonStoryliner(e));
+    return pISK+estimateLPFromRewards(pRewards)*mainRate;
   }  
   const profits=[  
     {label:'1일 수익',days:1},{label:'7일 수익',days:7},  
@@ -1259,11 +1318,12 @@ function renderMission(){
     if(!byDate[m.date])byDate[m.date]={count:0,isk:0,lp:0};  
     byDate[m.date].count++;  
   });  
-  allEntries.filter(e=>e.ref_type==='agent_mission_reward'&&parseFloat(e.amount||0)>0&&isNonStoryliner(e))  
-    .forEach(e=>{  
-      const d=e.date.slice(0,10);  
-      if(!byDate[d])byDate[d]={count:0,isk:0,lp:0};  
-      byDate[d].lp+=(parseFloat(e.amount||0)+parseFloat(e.tax||0))/MISSION_ISK_PER_LP;  
+  allEntries.filter(e=>e.ref_type==='agent_mission_reward'&&parseFloat(e.amount||0)>0&&isNonStoryliner(e))
+    .forEach(e=>{
+      const d=e.date.slice(0,10);
+      if(!byDate[d])byDate[d]={count:0,isk:0,lp:0};
+      const ci=registeredChars.findIndex(c=>c.charName===e.charName);
+      byDate[d].lp+=(parseFloat(e.amount||0)+parseFloat(e.tax||0))/getMissionIskPerLP(ci>=0?ci:0);
     });  
   
   const dates=Object.keys(byDate).sort((a,b)=>b.localeCompare(a));  
@@ -1335,10 +1395,12 @@ function renderMission(){
 }  
   
 // ── SUB TABS ──  
-function buildSubTabs(containerId,activeVar,callback,setter){  
-  const names=['All',...registeredChars.map(c=>c.charName)];  
-  const vals=['all',...registeredChars.map(c=>c.charName)];  
-  document.getElementById(containerId).innerHTML=names.map((n,i)=>`<button class="sub-tab ${window[activeVar]===vals[i]?'active':''}" onclick="${setter}('${vals[i]}');${callback}()">${n}</button>`).join('');  
+function buildSubTabs(containerId,activeVar,callback,setter){
+  const entries=[{name:'All',val:'all',cid:null},...registeredChars.map(c=>({name:c.charName,val:c.charName,cid:c.charId}))];
+  document.getElementById(containerId).innerHTML=entries.map(({name,val,cid})=>{
+    const por=cid?`<img src="https://images.evetech.net/characters/${cid}/portrait?size=32" style="width:16px;height:16px;border-radius:50%;margin-right:4px;vertical-align:middle;" onerror="this.style.display='none'">`:'';
+    return`<button class="sub-tab ${window[activeVar]===val?'active':''}" onclick="${setter}('${val}');${callback}()">${por}${name}</button>`;
+  }).join('');
 }  
   
 function setActiveAsset(v){activeAssetChar=v;buildSubTabs('asset-char-tabs','activeAssetChar','renderAssets','setActiveAsset');renderAssets();}  
@@ -1398,7 +1460,7 @@ function renderJournal(){
       dispColor=dispAmt>=0?'var(--accent3)':'var(--danger)';  
     }  
     const dispRef=isTaxView?ft:e.ref_type;  
-    return`<tr><td style="font-family:'Noto Sans KR',sans-serif;font-size:10px;color:var(--text3);white-space:nowrap">${e.date.slice(0,10)}</td><td style="font-size:12px;color:var(--text2)">${e.charName||'—'}</td><td>${refTag(dispRef)}</td><td style="color:var(--text2);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">${e.description||'—'}</td><td class="num" style="color:${dispColor}">${dispAmt>=0?'+':''}${fmtISK(Math.abs(dispAmt))}</td><td class="num" style="color:var(--text2)">${fmtISK(Math.abs(parseFloat(e.balance||0)))}</td></tr>`;  
+    return`<tr><td style="font-family:'Noto Sans KR',sans-serif;font-size:10px;color:var(--text3);white-space:nowrap">${e.date.slice(0,10)}</td><td style="font-size:12px;color:var(--text2)">${charPortraitImg(e.charName||'',20)}${e.charName||'—'}</td><td>${refTag(dispRef)}</td><td style="color:var(--text2);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">${e.description||'—'}</td><td class="num" style="color:${dispColor}">${dispAmt>=0?'+':''}${fmtISK(Math.abs(dispAmt))}</td><td class="num" style="color:var(--text2)">${fmtISK(Math.abs(parseFloat(e.balance||0)))}</td></tr>`;  
   }).join('')}${rows.length>1000?`<tr><td colspan="6" class="empty">Showing 1000 of ${rows.length}</td></tr>`:''}</tbody>`;  
 }  
   
@@ -1472,15 +1534,15 @@ async function renderAssets(){
   if(assetView==='list'){  
     const ta=document.getElementById('table-assets');  
     if(!sorted.length){ta.innerHTML='<tbody><tr><td colspan="6" class="empty">NO DATA</td></tr></tbody>';return;}  
-    ta.innerHTML=`<thead><tr>  
-      <th style="color:var(--text3)">Character</th>  
-      ${thSort('item','Item')}  
-      ${thSort('location','Location')}  
-      ${thSort('flag','Flag')}  
-      ${thSort('quantity','Qty')}  
-      ${thSort('totalValue','Est. Value')}  
-    </tr></thead><tbody>${sorted.slice(0,500).map(a=>`<tr>  
-      <td style="font-size:12px;color:var(--text2)">${a.charName}</td>  
+    ta.innerHTML=`<thead><tr>
+      <th style="color:var(--text3)">Character</th>
+      ${thSort('item','Item')}
+      ${thSort('location','Location')}
+      ${thSort('flag','Flag')}
+      ${thSort('quantity','Qty')}
+      ${thSort('totalValue','Est. Value')}
+    </tr></thead><tbody>${sorted.slice(0,500).map(a=>`<tr>
+      <td style="font-size:12px;color:var(--text2)">${charPortraitImg(a.charName,20)}${a.charName}</td>  
       <td style="font-size:12px">${nameCache.types[a.type_id]||`Type ${a.type_id}`}</td>  
       <td style="font-size:11px;color:var(--text3);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nameCache.locations[a.location_id]||`Location ${a.location_id}`}</td>  
       <td style="font-size:11px;color:var(--text3)">${a.location_flag||'—'}</td>  
@@ -1494,25 +1556,30 @@ async function renderAssets(){
     const locsSorted=Object.entries(byLoc).sort((a,b)=>b[1].total-a[1].total);  
     const container=document.getElementById('asset-station-view');  
     if(!locsSorted.length){container.innerHTML='<div class="empty">NO DATA</div>';return;}  
-    container.innerHTML=locsSorted.map(([loc,{items,total}])=>`  
-      <div class="station-group">  
-        <div class="station-header">  
-          <span class="station-name">${loc}</span>  
-          <span class="station-value">${fmtISK(total)} ISK · ${items.length} types</span>  
-        </div>  
-        <div class="station-body">  
-          <table class="data-table">  
-            <thead><tr><th>Character</th><th>Item</th><th>Flag</th><th style="text-align:right">Qty</th><th style="text-align:right">Est. Value</th></tr></thead>  
-            <tbody>${items.map(a=>`<tr>  
-              <td style="font-size:12px;color:var(--text2)">${a.charName}</td>  
+    container.innerHTML=locsSorted.map(([loc,{items,total}],idx)=>{
+      const isC=collapsedStations.has(idx);
+      return`<div class="station-group">
+        <div class="station-header" onclick="toggleStation(${idx})">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="color:var(--text3);font-size:11px;">${isC?'▶':'▼'}</span>
+            <span class="station-name">${loc}</span>
+          </div>
+          <span class="station-value">${fmtISK(total)} ISK · ${items.length} types</span>
+        </div>
+        <div class="station-body" id="stbody_${idx}" style="${isC?'display:none':''}">
+          <table class="data-table">
+            <thead><tr><th>Character</th><th>Item</th><th>Flag</th><th style="text-align:right">Qty</th><th style="text-align:right">Est. Value</th></tr></thead>
+            <tbody>${items.map(a=>`<tr>
+              <td style="font-size:12px;color:var(--text2)">${charPortraitImg(a.charName,20)}${a.charName}</td>  
               <td style="font-size:12px">${nameCache.types[a.type_id]||`Type ${a.type_id}`}</td>  
               <td style="font-size:11px;color:var(--text3)">${a.location_flag||'—'}</td>  
               <td class="num">${fmtNum(a.quantity)}</td>  
               <td class="num" style="color:var(--accent)">${a.totalValue>0?fmtISK(a.totalValue)+' ISK':'—'}</td>  
-            </tr>`).join('')}</tbody>  
-          </table>  
-        </div>  
-      </div>`).join('');  
+            </tr>`).join('')}</tbody>
+          </table>
+        </div>
+      </div>`;
+    }).join('');  
   }  
   
   // 위치 필터 업데이트  
@@ -1520,7 +1587,15 @@ async function renderAssets(){
   document.getElementById('asset-loc-filter').innerHTML='<option value="">All Locations</option>'+allLocs.slice(0,100).map(l=>`<option value="${l}">${nameCache.locations[parseInt(l)]||l}</option>`).join('');  
 }  
   
-// ── ASSET SORT ──  
+function toggleStation(idx){
+  if(collapsedStations.has(idx))collapsedStations.delete(idx);else collapsedStations.add(idx);
+  const body=document.getElementById('stbody_'+idx);
+  if(body)body.style.display=collapsedStations.has(idx)?'none':'';
+  const hdrs=document.querySelectorAll('.station-header');
+  if(hdrs[idx]){const arr=hdrs[idx].querySelector('span');if(arr)arr.textContent=collapsedStations.has(idx)?'▶':'▼';}
+}
+
+// ── ASSET SORT ──
 function setAssetSort(col){  
   if(assetSortCol===col)assetSortDir=assetSortDir==='asc'?'desc':'asc';  
   else{assetSortCol=col;assetSortDir=col==='totalValue'||col==='quantity'?'desc':'asc';}  
@@ -1542,8 +1617,8 @@ async function renderOrders(){
   
   const to=document.getElementById('table-orders');  
   if(!allO.length){to.innerHTML='<tbody><tr><td colspan="7" class="empty">NO DATA</td></tr></tbody>';}  
-  else to.innerHTML=`<thead><tr><th>Character</th><th>Item</th><th>B/S</th><th>Location</th><th style="text-align:right">Price</th><th style="text-align:right">Remain</th><th style="text-align:right">Total Value</th></tr></thead><tbody>${allO.map(o=>`<tr>  
-    <td style="font-size:12px;color:var(--text2)">${o.charName}</td>  
+  else to.innerHTML=`<thead><tr><th>Character</th><th>Item</th><th>B/S</th><th>Location</th><th style="text-align:right">Price</th><th style="text-align:right">Remain</th><th style="text-align:right">Total Value</th></tr></thead><tbody>${allO.map(o=>`<tr>
+    <td style="font-size:12px;color:var(--text2)">${charPortraitImg(o.charName,20)}${o.charName}</td>  
     <td style="font-size:12px">${nameCache.types[o.type_id]||`Type ${o.type_id}`}</td>  
     <td><span class="tag ${o.is_buy_order?'buy':'sell'}">${o.is_buy_order?'BUY':'SELL'}</span></td>  
     <td style="font-size:11px;color:var(--text3);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nameCache.locations[o.location_id]||`Location ${o.location_id}`}</td>  
@@ -1556,8 +1631,8 @@ async function renderOrders(){
   if(activeOrdersChar!=='all')allC=allC.filter(c=>c.charName===activeOrdersChar);  
   const tc=document.getElementById('table-contracts');  
   if(!allC.length){tc.innerHTML='<tbody><tr><td colspan="6" class="empty">NO OUTSTANDING CONTRACTS</td></tr></tbody>';}  
-  else tc.innerHTML=`<thead><tr><th>Character</th><th>Type</th><th>Title</th><th style="text-align:right">Price</th><th style="text-align:right">Collateral</th><th>Expires</th></tr></thead><tbody>${allC.map(c=>`<tr>  
-    <td style="font-size:12px;color:var(--text2)">${c.charName}</td>  
+  else tc.innerHTML=`<thead><tr><th>Character</th><th>Type</th><th>Title</th><th style="text-align:right">Price</th><th style="text-align:right">Collateral</th><th>Expires</th></tr></thead><tbody>${allC.map(c=>`<tr>
+    <td style="font-size:12px;color:var(--text2)">${charPortraitImg(c.charName,20)}${c.charName}</td>  
     <td><span class="tag contract">${(c.type||'').replace(/_/g,' ').toUpperCase()}</span></td>  
     <td style="font-size:12px;color:var(--text2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.title||'—'}</td>  
     <td class="num">${c.price!=null?fmtISK(c.price)+' ISK':'—'}</td>  
@@ -1779,8 +1854,8 @@ function renderOverviewCharts(){
   registeredChars.forEach((ch,i)=>{  
     const d=charDataCache[i];if(!d?.journal)return;  
     const jf=filterByPeriod(d.journal,currentPeriod);  
-    const mISK=jf.filter(e=>e.ref_type==='agent_mission_reward').reduce((s,e)=>s+parseFloat(e.amount||0)+parseFloat(e.tax||0),0);  
-    const estLP=mISK/MISSION_ISK_PER_LP;  
+    const mISK=jf.filter(e=>e.ref_type==='agent_mission_reward').reduce((s,e)=>s+parseFloat(e.amount||0)+parseFloat(e.tax||0),0);
+    const estLP=mISK/getMissionIskPerLP(i);
     const mainCid=lpMainFaction[ch.charId];  
     estLpInc+=estLP*getLpRate(mainCid||0);  
   });  
@@ -1831,11 +1906,11 @@ function renderCharList(){
       ondrop="onCharDrop(event,${i})"  
       ondragend="onCharDragEnd()"  
       style="display:flex;align-items:center;gap:6px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:5px 10px;cursor:grab;user-select:none;">  
-      <img src="https://images.evetech.net/characters/${c.charId}/portrait?size=32" style="width:22px;height:22px;border-radius:50%;" onerror="this.style.display='none'">  
-      <span style="font-size:12px;color:var(--text2)">${c.charName}</span>  
-      ${c.walletType==='corp'?`<span style="font-size:9px;color:var(--text3);font-family:'Noto Sans KR',sans-serif">CORP</span>`:''}  
-      ${registeredChars.length>1?`<span style="color:var(--text3);font-size:11px;margin-left:4px;">Drag</span>`:''}  
-      ${registeredChars.length>1?`<span onclick="removeChar(${i})" style="color:var(--text3);font-size:13px;cursor:pointer;margin-left:2px;">×</span>`:''}  
+      ${registeredChars.length>1?`<span style="color:var(--text3);font-size:14px;line-height:1;cursor:grab;flex-shrink:0;">⠿</span>`:''}
+      <img src="https://images.evetech.net/characters/${c.charId}/portrait?size=32" style="width:22px;height:22px;border-radius:50%;" onerror="this.style.display='none'">
+      <span style="font-size:12px;color:var(--text2);flex:1;">${c.charName}</span>
+      ${c.walletType==='corp'?`<span style="font-size:9px;color:var(--text3);font-family:'Noto Sans KR',sans-serif">CORP</span>`:''}
+      ${registeredChars.length>1?`<span onclick="removeChar(${i})" style="color:var(--text3);font-size:13px;cursor:pointer;">×</span>`:''}  
     </div>`).join('');  
   
   const allTypes=[...new Set(getAllJournal().map(e=>e.ref_type).filter(Boolean))].sort();  
@@ -2028,17 +2103,18 @@ function exportExcel(){
   showToast('엑셀 파일이 저장되었습니다.','success');  
 }  
   
-const pages=['overview','mission','agent','standing','assets','journal','orders','lp'];  
-function switchPage(p){  
-  pages.forEach(x=>document.getElementById(`page-${x}`).style.display=x===p?'':'none');  
-  document.querySelectorAll('.nav-tab').forEach((t,i)=>t.classList.toggle('active',pages[i]===p));  
-  if(p==='mission'){buildSubTabs('mission-char-tabs','activeMissionChar','renderMission','setActiveMission');renderMission();}  
-  if(p==='agent')renderAgent();  
-  if(p==='standing')renderStandings();  
-  if(p==='assets')renderAssets();  
-  if(p==='journal')renderJournal();  
-  if(p==='orders')renderOrders().catch(console.error);  
-  if(p==='lp'){initLpDefaults();renderLP();}  
+const pages=['overview','mission','agent','standing','assets','journal','orders','lp','skills'];
+function switchPage(p){
+  pages.forEach(x=>document.getElementById(`page-${x}`).style.display=x===p?'':'none');
+  document.querySelectorAll('.nav-tab').forEach((t,i)=>t.classList.toggle('active',pages[i]===p));
+  if(p==='mission'){buildSubTabs('mission-char-tabs','activeMissionChar','renderMission','setActiveMission');renderMission();}
+  if(p==='agent')renderAgent();
+  if(p==='standing')renderStandings();
+  if(p==='assets')renderAssets();
+  if(p==='journal')renderJournal();
+  if(p==='orders')renderOrders().catch(console.error);
+  if(p==='lp'){initLpDefaults();renderLP();}
+  if(p==='skills'){buildSkillCharTabs();renderSkills();}
 }  
   
 function renderAgent(){  
@@ -2093,6 +2169,96 @@ function renderAgent(){
   </td></tr></tfoot>`:''}`;  
 }  
   
+// ── SKILLS TAB ──
+function buildSkillCharTabs(){
+  const el=document.getElementById('skill-char-tabs');if(!el)return;
+  el.innerHTML=registeredChars.map((c,i)=>{
+    const por=`<img src="https://images.evetech.net/characters/${c.charId}/portrait?size=32" style="width:16px;height:16px;border-radius:50%;margin-right:4px;vertical-align:middle;" onerror="this.style.display='none'">`;
+    return`<button class="sub-tab ${activeSkillChar===i?'active':''}" onclick="activeSkillChar=${i};buildSkillCharTabs();renderSkills()">${por}${c.charName}</button>`;
+  }).join('');
+}
+async function renderSkills(){
+  const idx=activeSkillChar;
+  const c=registeredChars[idx];if(!c)return;
+  const d=charDataCache[idx];
+  const skills=d?.skills||[];
+  const totalSP=d?.totalSP||0;const unallocSP=d?.unallocated_sp||0;
+  document.getElementById('skill-summary').innerHTML=`<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:1rem;">
+    <div class="sc" style="flex:1;min-width:140px;text-align:center;"><div class="sl">Total SP</div><div class="sv">${fmtNum(totalSP)}</div></div>
+    <div class="sc" style="flex:1;min-width:140px;text-align:center;"><div class="sl">Unallocated SP</div><div class="sv" style="color:var(--accent3)">${fmtNum(unallocSP)}</div></div>
+    <div class="sc" style="flex:1;min-width:140px;text-align:center;"><div class="sl">Skills Trained</div><div class="sv">${skills.length}</div></div>
+  </div>`;
+  const skillMap=new Map(skills.map(s=>[Number(s.skill_id),s]));
+  const missionSkillDots=(skillId)=>{
+    const sk=skillMap.get(Number(skillId));
+    const lv=sk?Number(sk.trained_skill_level)||0:-1;
+    return[1,2,3,4,5].map(n=>{
+      let bg,border;
+      if(lv===-1){bg='transparent';border='#4a9fe0';}
+      else if(lv===0){bg='transparent';border='#4caf50';}
+      else if(lv===5){bg='#ffd700';border='#ffd700';}
+      else{bg=n<=lv?'#4caf50':'transparent';border=n<=lv?'#4caf50':'rgba(120,180,220,0.3)';}
+      return`<div style="display:inline-block;width:11px;height:11px;border-radius:50%;background:${bg};border:2px solid ${border};margin:0 2px;vertical-align:middle;"></div>`;
+    }).join('');
+  };
+  const missionNames={[SKILL_SOCIAL]:'Social',[SKILL_NEGOTIATIONS]:'Negotiations',[SKILL_DIPLOMACY]:'Diplomacy',[SKILL_CRIMINAL_CONNECTIONS]:'Criminal Connections',[SKILL_SECURITY_CONNECTIONS]:'Security Connections'};
+  const missionSkillRows=[SKILL_SOCIAL,SKILL_NEGOTIATIONS,SKILL_DIPLOMACY,SKILL_CRIMINAL_CONNECTIONS,SKILL_SECURITY_CONNECTIONS].map(sid=>`
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 1rem;border-bottom:1px solid rgba(14,58,90,.3);">
+      <span style="font-size:13px;color:var(--text);flex:1;">${missionNames[sid]}</span>
+      <div style="display:flex;align-items:center;gap:0;flex-shrink:0;margin-left:10px;">${missionSkillDots(sid)}</div>
+    </div>`).join('');
+  const missionPanel=`<div class="panel" style="margin-bottom:8px;">
+    <div class="ph"><span class="pt">미션 관련 스킬</span></div>
+    <div>${missionSkillRows}</div>
+  </div>`;
+  showLoading('Loading all EVE skills...');
+  const allGroups=await fetchAllEveSkillGroups();
+  const allTypeIds=[...new Set(Object.values(allGroups).flatMap(g=>g.types))];
+  await resolveTypeNames(allTypeIds);
+  hideLoading();
+  const charLvMap=new Map(skills.map(s=>[Number(s.skill_id),Number(s.trained_skill_level)||0]));
+  const trainedOnly=document.getElementById('chk-trained-only')?.checked||false;
+  const sortedGroups=Object.entries(allGroups).filter(([,g])=>g.types.length>0).sort(([,a],[,b])=>a.name.localeCompare(b.name));
+  window.skillGroupMap={};
+  sortedGroups.forEach(([,g],gi)=>{window.skillGroupMap[g.name]=gi;});
+  const skillDot=(lv,n)=>{
+    let bg,border;
+    if(lv===-1){bg='transparent';border='#4a9fe0';}
+    else if(lv===0){bg='transparent';border='#4caf50';}
+    else if(lv===5){bg='#ffd700';border='#ffd700';}
+    else{bg=n<=lv?'#4caf50':'transparent';border=n<=lv?'#4caf50':'rgba(120,180,220,0.25)';}
+    return`<div style="width:9px;height:9px;border-radius:50%;background:${bg};border:1px solid ${border};display:inline-block;"></div>`;
+  };
+  document.getElementById('skill-list').innerHTML=missionPanel+sortedGroups.map(([gid,group],gi)=>{
+    const isC=skillCollapsed[group.name];
+    const gskills=group.types.map(tid=>{const n=Number(tid);return{id:n,name:nameCache.types[tid]||`Skill ${tid}`,lv:charLvMap.has(n)?charLvMap.get(n):-1};}).filter(s=>!trainedOnly||s.lv>=0).sort((a,b)=>a.name.localeCompare(b.name));
+    if(!gskills.length)return'';
+    const trainedAt5=gskills.filter(s=>s.lv===5).length;
+    const rows=gskills.map(s=>{
+      const lv=s.lv;
+      const dots=[1,2,3,4,5].map(n=>skillDot(lv,n)).join('');
+      return`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 1rem;border-bottom:1px solid rgba(14,58,90,.3);">
+        <span style="font-size:13px;color:${lv===-1?'var(--text3)':'var(--text)'};">${s.name}</span>
+        <div style="display:flex;align-items:center;gap:6px;"><div style="display:flex;gap:2px;">${dots}</div><span style="font-size:13px;font-weight:600;color:${lv===-1?'var(--text3)':lvColor(lv)};min-width:18px;text-align:center;">${lv===-1?'—':lvRoman(lv)}</span></div>
+      </div>`;
+    }).join('');
+    return`<div class="panel" style="margin-bottom:8px;">
+      <div class="ph" style="cursor:pointer;" onclick="toggleSkillGroup('${group.name.replace(/\\/g,'\\\\').replace(/'/g,'\\\'')}')" >
+        <span class="pt">${group.name} <span style="color:var(--text3);font-weight:400;font-size:10px;">(${gskills.length}개 · V: ${trainedAt5})</span></span>
+        <span id="sgico_${gi}" style="color:var(--text3);">${isC?'▶':'▼'}</span>
+      </div>
+      <div id="sg_${gi}" style="${isC?'display:none':''}"> ${rows}</div>
+    </div>`;
+  }).join('');
+}
+function toggleSkillGroup(gname){
+  skillCollapsed[gname]=!skillCollapsed[gname];
+  const gi=window.skillGroupMap?.[gname];if(gi===undefined)return;
+  const b=document.getElementById('sg_'+gi);const i=document.getElementById('sgico_'+gi);
+  if(b)b.style.display=skillCollapsed[gname]?'none':'';
+  if(i)i.textContent=skillCollapsed[gname]?'▶':'▼';
+}
+
 function getMainFactionGroup(){  
   const lpByGroup={};  
   registeredChars.forEach((_,i)=>{  
@@ -2236,64 +2402,103 @@ function renderStandings(){
     }</div>`;  
   }  
   
-  // standing 값 조회  
-  const getSt=(charIdx,fromId)=>{  
-    const st=(charDataCache[charIdx]?.standings||[]).find(s=>s.from_id===fromId);  
-    return st?st.standing:null;  
-  };  
-  const stColor=v=>{  
-    if(v===null)return'var(--text3)';  
-    if(v>=8)return'var(--gold)';  
-    if(v>=5)return'#5bc87a';  
-    if(v>=0)return'var(--accent2)';  
-    return'#e05c5c';  
-  };  
-  const stFmt=v=>v===null?'—':v.toFixed(2);  
-  
-  // 헤더: 팩션 | 콥들 | 에이전트들  
-  const stAlign='left';  
-  const htmlEsc=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));  
-  const charColW=210;  
-  const dataColW=96;  
-  const cellPad='9px 10px';  
-  const headLabel=v=>`<span title="${htmlEsc(v)}" style="display:block;width:${dataColW-20}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${htmlEsc(v)}</span>`;  
-  const dataThStyle=`text-align:${stAlign};width:${dataColW}px;min-width:${dataColW}px;max-width:${dataColW}px;padding:${cellPad};`;  
-  const corpThs=corpIds.map(cid=>`<th style="${dataThStyle}">${headLabel(corpNames[cid]||cid)}</th>`).join('');  
-  const agentThs=agentList.map(n=>`<th style="${dataThStyle}font-size:10px;color:var(--text3);">${headLabel(n)}</th>`).join('');  
-  const charHeader=`<th style="text-align:left;width:${charColW}px;min-width:${charColW}px;max-width:${charColW}px;padding:${cellPad};">캐릭터</th>`;  
-  
-  const thead=`<thead><tr>  
-    ${charHeader}  
-    <th style="${dataThStyle}">${headLabel('팩션')}</th>  
-    ${corpThs}  
-    ${agentThs}  
-  </tr></thead>`;  
-  
-  const visibleChars=registeredChars  
-    .map((c,i)=>({c,i}))  
-    .filter(({c})=>!(standingUi.hiddenChars||[]).includes(c.charId));  
-  const tbody=`<tbody>${visibleChars.map(({c,i})=>{  
-    const fv=getSt(i,factionId);  
-    const rowCellStyle=`text-align:${stAlign};width:${dataColW}px;min-width:${dataColW}px;max-width:${dataColW}px;padding:10px 10px;`;  
-    const charCell=`<td style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:${charColW}px;min-width:${charColW}px;max-width:${charColW}px;padding:10px 10px;" title="${htmlEsc(c.charName)}">${htmlEsc(c.charName)}</td>`;  
-    const corpCells=corpIds.map(cid=>{  
-      const v=getSt(i,cid);  
-      return`<td style="${rowCellStyle}font-weight:600;color:${stColor(v)};">${stFmt(v)}</td>`;  
-    }).join('');  
-    const agentCells=agentList.map(n=>{  
-      const id=agentNameToId[n];  
-      const v=id?getSt(i,id):null;  
-      return`<td style="${rowCellStyle}color:${stColor(v)};">${stFmt(v)}</td>`;  
-    }).join('');  
-    return`<tr>  
-      ${charCell}  
-      <td style="${rowCellStyle}font-size:15px;font-weight:700;color:${stColor(fv)};">${stFmt(fv)}</td>  
-      ${corpCells}  
-      ${agentCells}  
-    </tr>`;  
-  }).join('')||`<tr><td colspan="${2+corpIds.length+agentList.length}" class="empty">NO VISIBLE CHARACTERS</td></tr>`}</tbody>`;  
-  
-  tm.innerHTML=thead+tbody;  
+  // standing 값 조회
+  const getSt=(charIdx,fromId)=>{const st=(charDataCache[charIdx]?.standings||[]).find(s=>s.from_id===fromId);return st?st.standing:null;};
+  const isPirateGroup=PIRATE_GROUPS.has(grp);
+  const getCorpIsPirate=cid=>PIRATE_GROUPS.has(CORP_GROUP[cid]||'');
+  const getAgentIsPirate=n=>PIRATE_GROUPS.has(agentNameToFaction[n]||'');
+  const getStA=(charIdx,fromId,isP)=>applyStandingBonus(getSt(charIdx,fromId),charIdx,isP);
+  const stColor=v=>{if(v===null)return'var(--text3)';if(v>=8)return'var(--gold)';if(v>=5)return'#5bc87a';if(v>=0)return'var(--accent2)';return'#e05c5c';};
+  const stFmt=v=>v===null?'—':v.toFixed(2);
+
+  // 정렬 컨트롤 삽입 (표 위)
+  const sortCtrlHtml=`<div style="display:flex;gap:16px;align-items:center;margin-bottom:10px;flex-wrap:wrap;margin-left:12px;">
+    <span style="font-size:11px;color:var(--text3);letter-spacing:1px;">정렬 기준:</span>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px;color:var(--text2);">
+      <input type="radio" name="st-sort" value="lowest" ${standingDefaultSort==='lowest'?'checked':''} onchange="setStandingDefaultSort('lowest')"> 낮은 스탠딩 우선
+    </label>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px;color:var(--text2);">
+      <input type="radio" name="st-sort" value="name" ${standingDefaultSort==='name'?'checked':''} onchange="setStandingDefaultSort('name')"> 이름순
+    </label>
+    ${standingSort.col?`<button onclick="standingSort={col:null,dir:'asc'};renderStandings();" style="font-size:10px;background:transparent;border:1px solid var(--border2);color:var(--text3);border-radius:3px;padding:3px 8px;cursor:pointer;">정렬 초기화</button>`:''}
+  </div>`;
+
+  // 열 헤더 정렬 아이콘
+  const sortArrow=col=>standingSort.col===col?(standingSort.dir==='asc'?'↑':'↓'):'';
+  const thClick=col=>`onclick="setStandingColSort('${col}')" style="cursor:pointer;"`;
+
+  const htmlEsc=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  const charColW=220; const dataColW=96; const agentColW=106; const cellPad='9px 10px';
+
+  // 팩션·콥 구분선, 콥·에이전트 구분선
+  const divBorderL='border-left:2px solid var(--border2);';
+  const headLabel=(v,w)=>`<span title="${htmlEsc(v)}" style="display:block;width:${w-20}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${htmlEsc(v)}</span>`;
+  const corpDivBorder=corpIds.length>0?divBorderL:'';
+  const agentDivBorder=agentList.length>0?divBorderL:'';
+
+  const facThStyle=`text-align:left;width:${dataColW}px;min-width:${dataColW}px;max-width:${dataColW}px;padding:${cellPad};`;
+  const corpThStyle=(isFirst)=>`text-align:left;width:${dataColW}px;min-width:${dataColW}px;max-width:${dataColW}px;padding:${cellPad};${isFirst?divBorderL:''}`;
+  const agentThStyle=(ai)=>`text-align:left;width:${agentColW}px;min-width:${agentColW}px;max-width:${agentColW}px;padding:6px 8px;overflow:hidden;${ai>0?'border-left:1px solid var(--border);':''}`;
+
+  const facTh=`<th ${thClick('faction')} style="${facThStyle}">${headLabel('팩션 '+sortArrow('faction'),dataColW)}</th>`;
+  const corpThs=corpIds.map((cid,ci)=>`<th ${thClick('corp_'+cid)} style="${corpThStyle(ci===0)}">${headLabel((corpNames[cid]||String(cid))+' '+sortArrow('corp_'+cid),dataColW)}</th>`).join('');
+
+  // 에이전트 헤더: 메모 입력 + 이름
+  const agentThs=agentList.map((n,ai)=>{
+    const memo=(standingMemos[n]||'').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+    return`<th style="${agentThStyle(ai)}">
+      <textarea rows="2" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text2);font-size:12px;resize:none;border-radius:3px;padding:2px 4px;margin-bottom:3px;font-family:'Noto Sans KR',sans-serif;" placeholder="메모..." onchange="saveStandingMemo('${htmlEsc(n)}',this.value)">${memo}</textarea>
+      <div ${thClick(n)} style="cursor:pointer;font-size:10px;color:var(--text3);display:block;width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${htmlEsc(n)} ${sortArrow(n)}</div>
+    </th>`;
+  }).join('');
+
+  const charHeader=`<th style="text-align:left;width:${charColW}px;min-width:${charColW}px;max-width:${charColW}px;padding:${cellPad};">캐릭터</th>`;
+  const thead=`<thead><tr>${charHeader}${facTh}${corpThs}${agentThs}</tr></thead>`;
+
+  // 캐릭터 로우 + 정렬
+  let visibleChars=registeredChars.map((c,i)=>({c,i})).filter(({c})=>!(standingUi.hiddenChars||[]).includes(c.charId));
+
+  // 최소 스탠딩(보정후) 계산 헬퍼
+  const charMinSt=ci=>{
+    const vals=[];
+    const fv=getStA(ci,factionId,isPirateGroup);if(fv!==null)vals.push(fv);
+    corpIds.forEach(cid=>{const v=getStA(ci,cid,getCorpIsPirate(cid));if(v!==null)vals.push(v);});
+    agentList.forEach(n=>{const id=agentNameToId[n];if(!id)return;const v=getStA(ci,id,getAgentIsPirate(n));if(v!==null)vals.push(v);});
+    return vals.length?Math.min(...vals):999;
+  };
+
+  if(standingSort.col){
+    const col=standingSort.col;
+    visibleChars.sort(({i:ia},{i:ib})=>{
+      let va,vb;
+      if(col==='faction'){va=getStA(ia,factionId,isPirateGroup)??999;vb=getStA(ib,factionId,isPirateGroup)??999;}
+      else if(col.startsWith('corp_')){const cid=parseInt(col.slice(5));const isP=getCorpIsPirate(cid);va=getStA(ia,cid,isP)??999;vb=getStA(ib,cid,isP)??999;}
+      else{const id=agentNameToId[col];const isP=getAgentIsPirate(col);va=id?getStA(ia,id,isP)??999:999;vb=id?getStA(ib,id,isP)??999:999;}
+      return standingSort.dir==='asc'?va-vb:vb-va;
+    });
+  } else if(standingDefaultSort==='lowest'){
+    visibleChars.sort(({i:ia},{i:ib})=>charMinSt(ia)-charMinSt(ib));
+  } else {
+    visibleChars.sort(({c:ca},{c:cb})=>ca.charName.localeCompare(cb.charName));
+  }
+
+  const tbody=`<tbody>${visibleChars.map(({c,i})=>{
+    const fv=getStA(i,factionId,isPirateGroup);
+    const rowCellStyle=`text-align:left;width:${dataColW}px;min-width:${dataColW}px;max-width:${dataColW}px;padding:10px;`;
+    const rowAgentStyle=(ai)=>`text-align:left;width:${agentColW}px;min-width:${agentColW}px;max-width:${agentColW}px;padding:10px 8px;overflow:hidden;${ai===0?divBorderL:ai>0?'border-left:1px solid var(--border);':''}`;
+    const portrait=`<img src="https://images.evetech.net/characters/${c.charId}/portrait?size=32" style="width:24px;height:24px;border-radius:50%;flex-shrink:0;margin-right:6px;" onerror="this.style.display='none'">`;
+    const charCell=`<td style="width:${charColW}px;min-width:${charColW}px;max-width:${charColW}px;padding:10px;" title="${htmlEsc(c.charName)}"><div style="display:flex;align-items:center;">${portrait}<span style="font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${htmlEsc(c.charName)}</span></div></td>`;
+    const corpCells=corpIds.map((cid,ci)=>{const v=getStA(i,cid,getCorpIsPirate(cid));return`<td style="${rowCellStyle}${ci===0?divBorderL:''}font-weight:600;color:${stColor(v)};">${stFmt(v)}</td>`;}).join('');
+    const agentCells=agentList.map((n,ai)=>{const id=agentNameToId[n];const v=id?getStA(i,id,getAgentIsPirate(n)):null;return`<td style="${rowAgentStyle(ai)}color:${stColor(v)};">${stFmt(v)}</td>`;}).join('');
+    return`<tr>${charCell}<td style="${rowCellStyle}font-size:15px;font-weight:700;color:${stColor(fv)};">${stFmt(fv)}</td>${corpCells}${agentCells}</tr>`;
+  }).join('')||`<tr><td colspan="${2+corpIds.length+agentList.length}" class="empty">NO VISIBLE CHARACTERS</td></tr>`}</tbody>`;
+
+  // 정렬컨트롤은 table 위 래퍼에 삽입
+  const wrapper=tm.parentElement;
+  let ctrlEl=wrapper?.querySelector('.standing-sort-ctrl');
+  if(!ctrlEl&&wrapper){ctrlEl=document.createElement('div');ctrlEl.className='standing-sort-ctrl';wrapper.insertBefore(ctrlEl,tm);}
+  if(ctrlEl)ctrlEl.innerHTML=sortCtrlHtml;
+  tm.innerHTML=thead+tbody;
 }  
   
 function setPeriod(d){currentPeriod=d;document.querySelectorAll('.pb').forEach((b,i)=>b.classList.toggle('active',[7,14,30][i]===d));renderOverviewCharts();}  
@@ -2522,8 +2727,9 @@ async function init(){
 async function initEnhanced(){  
   loadNameCache();  
   loadLpSettings();  
-  loadStandingAgentSettings();  
-  loadStandingUiSettings();  
+  loadStandingAgentSettings();
+  loadStandingUiSettings();
+  loadStandingMemos();
   updateStorageStatus();  
   currentLang=localStorage.getItem(LANG_KEY)||'ko';  
   const ls=document.getElementById('lang-sel');  
