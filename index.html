@@ -186,6 +186,7 @@ main{max-width:1440px;margin:0 auto;padding:1.5rem 2rem;}
     <button class="nav-tab" onclick="switchPage('journal')">저널</button>  
     <button class="nav-tab" onclick="switchPage('orders')">오더 & 계약</button>  
     <button class="nav-tab" onclick="switchPage('lp')">LP</button>
+    <button class="nav-tab" onclick="switchPage('isklp')">ISK/LP</button>
     <button class="nav-tab" onclick="switchPage('skills')">스킬</button>
   </div>    <!-- ── OVERVIEW ── -->    <div id="page-overview">  
     <div class="hero" style="margin-bottom:1.25rem;">  
@@ -300,6 +301,63 @@ main{max-width:1440px;margin:0 auto;padding:1.5rem 2rem;}
     <div id="lp-content"></div>
     <!-- 편집 모달 오버레이 -->
     <div id="lp-edit-modal" onclick="if(event.target===this)toggleLpEdit()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:200;align-items:center;justify-content:center;"></div>
+  </div>
+  <!-- ── ISK/LP ── -->
+  <div id="page-isklp" style="display:none;">
+    <!-- Row 1: 팩션 탭 + 리전/새로고침 -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem;flex-wrap:wrap;gap:8px;">
+      <div class="sub-tabs" style="margin-bottom:0;">
+        <button class="sub-tab active" id="isklp-ftab-guristas" onclick="setIskLpFaction('guristas')">Guristas</button>
+        <button class="sub-tab" id="isklp-ftab-sansha" onclick="setIskLpFaction('sansha')">Sansha's Nation</button>
+        <button class="sub-tab" id="isklp-ftab-serpentis" onclick="setIskLpFaction('serpentis')">Serpentis</button>
+        <button class="sub-tab" id="isklp-ftab-blood" onclick="setIskLpFaction('blood')">Blood Raiders</button>
+        <button class="sub-tab" id="isklp-ftab-angel" onclick="setIskLpFaction('angel')">Angel</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <select id="isklp-region" class="si" style="padding:5px 10px;font-size:11px;" onchange="renderIskLp()">
+          <option value="10000002">Jita (The Forge)</option>
+          <option value="10000043">Amarr (Domain)</option>
+          <option value="10000032">Dodixie (Sinq Laison)</option>
+        </select>
+        <button onclick="renderIskLp()" class="btn-sm">↻ 새로고침</button>
+      </div>
+    </div>
+    <!-- Row 2: 그룹 체크박스 (활성 팩션 기준) -->
+    <div id="isklp-grp-bar" style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:0.75rem;padding:8px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;min-height:36px;"></div>
+    <!-- Row 3: 옵션 + 업데이트 시간 -->
+    <div style="display:flex;align-items:center;gap:20px;margin-bottom:0.75rem;flex-wrap:wrap;">
+      <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--text2);user-select:none;">
+        <input type="checkbox" id="isklp-matbuy" onchange="renderIskLpTable(window._iskLpPrices||{})">
+        재료 Buy가로 구매
+      </label>
+      <div id="isklp-last-update" style="font-family:'Noto Sans KR',sans-serif;font-size:10px;color:var(--text3);margin-left:auto;"></div>
+    </div>
+    <!-- 테이블 -->
+    <div class="panel">
+      <div class="ts" style="max-height:none;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th onclick="setIskLpSort('name')" style="cursor:pointer;">아이템 <span id="isklp-sh-name" style="font-size:9px;"></span></th>
+              <th style="text-align:right;">LP</th>
+              <th style="text-align:right;">ISK 비용</th>
+              <th style="text-align:right;">추가비용</th>
+              <th style="text-align:right;">Sell 가격</th>
+              <th style="text-align:right;">Buy 가격</th>
+              <th onclick="setIskLpSort('sell')" style="text-align:right;cursor:pointer;">ISK/LP (Sell) <span id="isklp-sh-sell" style="font-size:9px;color:var(--accent);">▼</span></th>
+              <th onclick="setIskLpSort('buy')" style="text-align:right;cursor:pointer;">ISK/LP (Buy) <span id="isklp-sh-buy" style="font-size:9px;"></span></th>
+            </tr>
+          </thead>
+          <tbody id="isklp-tbody">
+            <tr><td colspan="9" class="empty">탭을 클릭하면 가격을 불러옵니다.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div style="font-family:'Noto Sans KR',sans-serif;font-size:10px;color:var(--text3);margin-top:0.5rem;">
+      * ISK/LP = (판매가 − 추가비용 − ISK 비용) ÷ LP &nbsp;|&nbsp; BP: 완제품가 − 재료비, 크리스탈: 팩션임플가 − 기반임플가(Sell) &nbsp;|&nbsp; 출처: fuzzwork
+    </div>
   </div>
   <!-- ── SKILLS ── -->
   <div id="page-skills" style="display:none;">
@@ -2103,7 +2161,7 @@ function exportExcel(){
   showToast('엑셀 파일이 저장되었습니다.','success');  
 }  
   
-const pages=['overview','mission','agent','standing','assets','journal','orders','lp','skills'];
+const pages=['overview','mission','agent','standing','assets','journal','orders','lp','isklp','skills'];
 function switchPage(p){
   pages.forEach(x=>document.getElementById(`page-${x}`).style.display=x===p?'':'none');
   document.querySelectorAll('.nav-tab').forEach((t,i)=>t.classList.toggle('active',pages[i]===p));
@@ -2114,6 +2172,7 @@ function switchPage(p){
   if(p==='journal')renderJournal();
   if(p==='orders')renderOrders().catch(console.error);
   if(p==='lp'){initLpDefaults();renderLP();}
+  if(p==='isklp')renderIskLp();
   if(p==='skills'){buildSkillCharTabs();renderSkills();}
 }  
   
@@ -2816,6 +2875,269 @@ async function initEnhanced(){
   },500);  
 }  
   
+// ── ISK/LP ──
+// type:'bp'    → BP 구매 후 제조. prod=완제품 typeId, mats=[[matTypeId,qty],...]
+// type:'trade' → LP+ISK+기반임플 제출. base=기반임플 typeId
+// (없음)       → 단순 아이템. typeId 가격 그대로 사용
+const ISK_LP_FACTIONS=[
+  {id:'guristas',name:'Guristas',color:'#00d4ff',items:[
+    {name:'High-grade Hydra Alpha Blueprint',  typeId:54410,lp:23625, isk:23625000, type:'bp',prod:54392,mats:[[2346,542],[2367,594],[2869,1],[11399,79],[28363,329]]},
+    {name:'High-grade Hydra Beta Blueprint',   typeId:54411,lp:31500, isk:31500000, type:'bp',prod:54393,mats:[[2348,620],[2367,542],[2869,1],[11399,114],[28363,315]]},
+    {name:'High-grade Hydra Gamma Blueprint',  typeId:54412,lp:47250, isk:47250000, type:'bp',prod:54394,mats:[[2348,887],[2869,1],[11399,146],[12836,691],[28363,329]]},
+    {name:'High-grade Hydra Delta Blueprint',  typeId:54413,lp:78750, isk:78750000, type:'bp',prod:54395,mats:[[2367,888],[2869,1],[11399,157],[12836,906],[28363,322]]},
+    {name:'High-grade Hydra Epsilon Blueprint',typeId:54414,lp:141750,isk:141750000,type:'bp',prod:54396,mats:[[2346,1070],[2869,1],[11399,172],[12836,1261],[28363,336]]},
+    {name:'High-grade Hydra Omega Blueprint',  typeId:54415,lp:267750,isk:267750000,type:'bp',prod:54397,mats:[[2346,687],[2348,609],[2367,654],[2869,1],[11399,183],[28363,350]]},
+    {name:'Mid-grade Hydra Alpha Blueprint',   typeId:54416,lp:7500,  isk:7500000,  type:'bp',prod:54398,mats:[[2346,326],[2367,357],[2869,1],[11399,48],[28363,161]]},
+    {name:'Mid-grade Hydra Beta Blueprint',    typeId:54417,lp:10000, isk:10000000, type:'bp',prod:54399,mats:[[2348,372],[2367,326],[2869,1],[11399,69],[28363,154]]},
+    {name:'Mid-grade Hydra Gamma Blueprint',   typeId:54418,lp:15000, isk:15000000, type:'bp',prod:54400,mats:[[2348,532],[2869,1],[11399,88],[12836,414],[28363,161]]},
+    {name:'Mid-grade Hydra Delta Blueprint',   typeId:54419,lp:25000, isk:25000000, type:'bp',prod:54401,mats:[[2367,532],[2869,1],[11399,94],[12836,543],[28363,154]]},
+    {name:'Mid-grade Hydra Epsilon Blueprint', typeId:54420,lp:45000, isk:45000000, type:'bp',prod:54402,mats:[[2346,642],[2869,1],[11399,103],[12836,757],[28363,161]]},
+    {name:'Mid-grade Hydra Omega Blueprint',   typeId:54421,lp:85000, isk:85000000, type:'bp',prod:54403,mats:[[2346,412],[2348,366],[2367,392],[2869,1],[11399,110],[28363,175]]},
+    {name:'High-grade Crystal Alpha',  typeId:20121,lp:23625, isk:23625000,  type:'trade',base:9899},
+    {name:'High-grade Crystal Beta',   typeId:20157,lp:31500, isk:31500000,  type:'trade',base:9941},
+    {name:'High-grade Crystal Gamma',  typeId:20158,lp:47250, isk:47250000,  type:'trade',base:9942},
+    {name:'High-grade Crystal Delta',  typeId:20159,lp:78750, isk:78750000,  type:'trade',base:9943},
+    {name:'High-grade Crystal Epsilon',typeId:20160,lp:141750,isk:141750000, type:'trade',base:9956},
+    {name:'High-grade Crystal Omega',  typeId:20161,lp:267750,isk:267750000, type:'trade',base:16248},
+    {name:'Mid-grade Crystal Alpha',   typeId:22107,lp:7500,  isk:7500000,   type:'trade',base:14295},
+    {name:'Mid-grade Crystal Beta',    typeId:22108,lp:10000, isk:10000000,  type:'trade',base:14297},
+    {name:'Mid-grade Crystal Gamma',   typeId:22111,lp:15000, isk:15000000,  type:'trade',base:14296},
+    {name:'Mid-grade Crystal Delta',   typeId:22109,lp:25000, isk:25000000,  type:'trade',base:14298},
+    {name:'Mid-grade Crystal Epsilon', typeId:22110,lp:45000, isk:45000000,  type:'trade',base:14299},
+    {name:'Mid-grade Crystal Omega',   typeId:22112,lp:85000, isk:85000000,  type:'trade',base:13263},
+    {name:'Guristas NET Resonator',    typeId:83469,lp:1000,  isk:1000000},
+  ]},
+  {id:'sansha',name:"Sansha's Nation",color:'#ff88aa',items:[
+    {name:'High-grade Nirvana Alpha Blueprint',  typeId:53728,lp:23625, isk:23000000, type:'bp',prod:53710,mats:[[2346,542],[2367,594],[2869,1],[11399,79],[17136,515]]},
+    {name:'High-grade Nirvana Beta Blueprint',   typeId:53729,lp:31500, isk:32000000, type:'bp',prod:53711,mats:[[2348,620],[2367,542],[2869,1],[11399,114],[17136,503]]},
+    {name:'High-grade Nirvana Gamma Blueprint',  typeId:53732,lp:47250, isk:50000000, type:'bp',prod:53715,mats:[[2348,887],[2869,1],[11399,146],[12836,691],[17136,531]]},
+    {name:'High-grade Nirvana Delta Blueprint',  typeId:53730,lp:78750, isk:75000000, type:'bp',prod:53712,mats:[[2367,888],[2869,1],[11399,157],[12836,906],[17136,497]]},
+    {name:'High-grade Nirvana Epsilon Blueprint',typeId:53731,lp:141750,isk:140000000,type:'bp',prod:53713,mats:[[2346,1070],[2869,1],[11399,172],[12836,1261],[17136,527]]},
+    {name:'High-grade Nirvana Omega Blueprint',  typeId:53733,lp:267750,isk:265000000,type:'bp',prod:53714,mats:[[2346,687],[2348,609],[2367,654],[2869,1],[11399,183],[17136,499]]},
+    {name:'Mid-grade Nirvana Alpha Blueprint',   typeId:53722,lp:7500,  isk:7500000,  type:'bp',prod:53704,mats:[[2346,326],[2367,357],[2869,1],[11399,48],[17136,257]]},
+    {name:'Mid-grade Nirvana Beta Blueprint',    typeId:53723,lp:10000, isk:10000000, type:'bp',prod:53705,mats:[[2348,372],[2367,326],[2869,1],[11399,69],[17136,251]]},
+    {name:'Mid-grade Nirvana Gamma Blueprint',   typeId:53726,lp:15000, isk:15000000, type:'bp',prod:53708,mats:[[2348,532],[2869,1],[11399,88],[12836,414],[17136,261]]},
+    {name:'Mid-grade Nirvana Delta Blueprint',   typeId:53724,lp:25000, isk:25000000, type:'bp',prod:53706,mats:[[2367,532],[2869,1],[11399,94],[12836,543],[17136,253]]},
+    {name:'Mid-grade Nirvana Epsilon Blueprint', typeId:53725,lp:45000, isk:45000000, type:'bp',prod:53707,mats:[[2346,642],[2869,1],[11399,103],[12836,757],[17136,259]]},
+    {name:'Mid-grade Nirvana Omega Blueprint',   typeId:53727,lp:85000, isk:85000000, type:'bp',prod:53709,mats:[[2346,412],[2348,366],[2367,392],[2869,1],[11399,110],[17136,255]]},
+    {name:'High-grade Rapture Alpha Blueprint',  typeId:57140,lp:23625, isk:23000000, type:'bp',prod:57123,mats:[[2346,542],[2367,594],[2869,1],[11399,79],[47975,360]]},
+    {name:'High-grade Rapture Beta Blueprint',   typeId:57142,lp:31500, isk:32000000, type:'bp',prod:57124,mats:[[2348,620],[2367,542],[2869,1],[11399,114],[47975,400]]},
+    {name:'High-grade Rapture Gamma Blueprint',  typeId:57143,lp:47250, isk:50000000, type:'bp',prod:57125,mats:[[2348,887],[2869,1],[11399,146],[12836,691],[47975,450]]},
+    {name:'High-grade Rapture Delta Blueprint',  typeId:57144,lp:78750, isk:75000000, type:'bp',prod:57126,mats:[[2367,888],[2869,1],[11399,157],[12836,906],[47975,500]]},
+    {name:'High-grade Rapture Epsilon Blueprint',typeId:57145,lp:141750,isk:140000000,type:'bp',prod:57127,mats:[[2346,1070],[2869,1],[11399,172],[12836,1261],[47975,540]]},
+    {name:'High-grade Rapture Omega Blueprint',  typeId:57146,lp:267750,isk:265000000,type:'bp',prod:57128,mats:[[2346,687],[2348,609],[2367,654],[2869,1],[11399,183],[47975,680]]},
+    {name:'Mid-grade Rapture Alpha Blueprint',   typeId:57134,lp:7500,  isk:7500000,  type:'bp',prod:57117,mats:[[2346,326],[2367,357],[2869,1],[11399,48],[47975,180]]},
+    {name:'Mid-grade Rapture Beta Blueprint',    typeId:57135,lp:10000, isk:10000000, type:'bp',prod:57118,mats:[[2348,372],[2367,326],[2869,1],[11399,69],[47975,200]]},
+    {name:'Mid-grade Rapture Gamma Blueprint',   typeId:57136,lp:15000, isk:15000000, type:'bp',prod:57119,mats:[[2348,532],[2869,1],[11399,88],[12836,414],[47975,225]]},
+    {name:'Mid-grade Rapture Delta Blueprint',   typeId:57137,lp:25000, isk:25000000, type:'bp',prod:57120,mats:[[2367,532],[2869,1],[11399,94],[12836,543],[47975,250]]},
+    {name:'Mid-grade Rapture Epsilon Blueprint', typeId:57138,lp:45000, isk:45000000, type:'bp',prod:57121,mats:[[2346,642],[2869,1],[11399,103],[12836,757],[47975,270]]},
+    {name:'Mid-grade Rapture Omega Blueprint',   typeId:57139,lp:85000, isk:85000000, type:'bp',prod:57122,mats:[[2346,412],[2348,366],[2367,392],[2869,1],[11399,110],[47975,340]]},
+    {name:'Sansha NET Resonator',typeId:83471,lp:1000,isk:1000000},
+  ]},
+  {id:'serpentis',name:'Serpentis',color:'#88ddaa',items:[
+    {name:'Serpentis NET Resonator',typeId:83472,lp:750,isk:1000000},
+  ]},
+  {id:'blood',name:'Blood Raiders',color:'#dd4466',items:[
+    {name:'Blood Raider NET Resonator',typeId:83468,lp:750,isk:1000000},
+  ]},
+  {id:'angel',name:'Angel Cartel',color:'#f0c040',items:[
+    {name:'Angel NET Resonator',typeId:83467,lp:1000,isk:1000000},
+  ]},
+];
+
+// 팩션별 그룹 정의 (체크박스 단위)
+const ISKLP_GROUPS={
+  guristas:[
+    {id:'hg-hydra',  label:'High-grade Hydra',  def:false, typeIds:[54410,54411,54412,54413,54414,54415]},
+    {id:'mg-hydra',  label:'Mid-grade Hydra',   def:false, typeIds:[54416,54417,54418,54419,54420,54421]},
+    {id:'hg-crystal',label:'High-grade Crystal',def:true,  typeIds:[20121,20157,20158,20159,20160,20161]},
+    {id:'mg-crystal',label:'Mid-grade Crystal', def:false, typeIds:[22107,22108,22111,22109,22110,22112]},
+    {id:'net',       label:'NET Resonator',      def:true,  typeIds:[83469]},
+  ],
+  sansha:[
+    {id:'hg-nirvana',label:'High-grade Nirvana',def:true,  typeIds:[53728,53729,53732,53730,53731,53733]},
+    {id:'mg-nirvana',label:'Mid-grade Nirvana', def:false, typeIds:[53722,53723,53726,53724,53725,53727]},
+    {id:'hg-rapture',label:'High-grade Rapture',def:false, typeIds:[57140,57142,57143,57144,57145,57146]},
+    {id:'mg-rapture',label:'Mid-grade Rapture', def:false, typeIds:[57134,57135,57136,57137,57138,57139]},
+    {id:'net',       label:'NET Resonator',      def:true,  typeIds:[83471]},
+  ],
+  serpentis:[{id:'net',label:'NET Resonator',def:true,typeIds:[83472]}],
+  blood:    [{id:'net',label:'NET Resonator',def:true,typeIds:[83468]}],
+  angel:    [{id:'net',label:'NET Resonator',def:true,typeIds:[83467]}],
+};
+
+let isklpActiveFac='guristas';
+let isklpSort='sell';
+let isklpSortAsc=false; // false=내림차순(높은값 우선)
+const isklpChecked={}; // 'facId:groupId' → boolean
+
+function _isk_key(facId,gId){return facId+':'+gId;}
+
+function initIskLpGroups(){
+  Object.entries(ISKLP_GROUPS).forEach(([facId,groups])=>{
+    groups.forEach(g=>{
+      const k=_isk_key(facId,g.id);
+      if(isklpChecked[k]===undefined)isklpChecked[k]=g.def;
+    });
+  });
+}
+
+function setIskLpFaction(facId){
+  isklpActiveFac=facId;
+  Object.keys(ISKLP_GROUPS).forEach(f=>{
+    const el=document.getElementById('isklp-ftab-'+f);
+    if(el)el.classList.toggle('active',f===facId);
+  });
+  renderIskLpGroupBar();
+  renderIskLpTable(window._iskLpPrices||{});
+}
+
+function renderIskLpGroupBar(){
+  const bar=document.getElementById('isklp-grp-bar');
+  if(!bar)return;
+  const groups=ISKLP_GROUPS[isklpActiveFac]||[];
+  const fac=ISK_LP_FACTIONS.find(f=>f.id===isklpActiveFac)||{color:'var(--accent)'};
+  bar.innerHTML=groups.map(g=>{
+    const k=_isk_key(isklpActiveFac,g.id);
+    return`<label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-size:12px;color:var(--text2);user-select:none;">
+      <input type="checkbox" ${isklpChecked[k]?'checked':''} onchange="toggleIskLpGroup('${isklpActiveFac}','${g.id}',this.checked)" style="accent-color:${fac.color};">
+      <span style="color:${isklpChecked[k]?fac.color:'var(--text2)'};">${g.label}</span>
+    </label>`;
+  }).join('');
+}
+
+function toggleIskLpGroup(facId,groupId,val){
+  isklpChecked[_isk_key(facId,groupId)]=val;
+  renderIskLpGroupBar();
+  renderIskLpTable(window._iskLpPrices||{});
+}
+
+function setIskLpSort(s){
+  if(isklpSort===s){
+    isklpSortAsc=!isklpSortAsc;
+  } else {
+    isklpSort=s;
+    isklpSortAsc=(s==='name');
+  }
+  ['name','sell','buy'].forEach(k=>{
+    const el=document.getElementById('isklp-sh-'+k);
+    if(!el)return;
+    el.textContent=isklpSort===k?(isklpSortAsc?'▲':'▼'):'';
+    el.style.color='var(--accent)';
+  });
+  renderIskLpTable(window._iskLpPrices||{});
+}
+
+function getIskLpCalc(item,prices,useMatBuy){
+  let sellPx=0,buyPx=0,extra=0;
+  if(item.type==='bp'){
+    const pd=prices[String(item.prod)]||{};
+    sellPx=parseFloat((pd.sell&&pd.sell.min)||0);
+    buyPx=parseFloat((pd.buy&&pd.buy.max)||0);
+    extra=item.mats.reduce((s,[t,q])=>{
+      const md=prices[String(t)]||{};
+      const p=useMatBuy?parseFloat((md.buy&&md.buy.max)||0):parseFloat((md.sell&&md.sell.min)||0);
+      return s+p*q;
+    },0);
+  } else if(item.type==='trade'){
+    const d=prices[String(item.typeId)]||{};
+    sellPx=parseFloat((d.sell&&d.sell.min)||0);
+    buyPx=parseFloat((d.buy&&d.buy.max)||0);
+    const bd=prices[String(item.base)]||{};
+    extra=parseFloat((bd.sell&&bd.sell.min)||0);
+  } else {
+    const d=prices[String(item.typeId)]||{};
+    sellPx=parseFloat((d.sell&&d.sell.min)||0);
+    buyPx=parseFloat((d.buy&&d.buy.max)||0);
+  }
+  const islSell=sellPx>0?(sellPx-extra-item.isk)/item.lp:null;
+  const islBuy=buyPx>0?(buyPx-extra-item.isk)/item.lp:null;
+  return{sellPx,buyPx,extra,islSell,islBuy};
+}
+
+function renderIskLpTable(prices){
+  const tbody=document.getElementById('isklp-tbody');
+  if(!tbody)return;
+  const useMatBuy=document.getElementById('isklp-matbuy')?.checked||false;
+
+  // 활성 팩션의 체크된 typeId만 수집
+  const checkedIds=new Set();
+  (ISKLP_GROUPS[isklpActiveFac]||[]).forEach(g=>{
+    if(isklpChecked[_isk_key(isklpActiveFac,g.id)])g.typeIds.forEach(id=>checkedIds.add(id));
+  });
+
+  // 활성 팩션 아이템 중 체크된 것만 필터
+  const activeFac=ISK_LP_FACTIONS.find(fac=>fac.id===isklpActiveFac);
+  const filtered=(activeFac?activeFac.items:[]).filter(item=>checkedIds.has(item.typeId));
+
+  if(!filtered.length){
+    tbody.innerHTML='<tr><td colspan="9" class="empty">선택된 아이템이 없습니다.</td></tr>';
+    return;
+  }
+
+  const computed=filtered.map(item=>({...item,...getIskLpCalc(item,prices,useMatBuy)}));
+
+  computed.sort((a,b)=>{
+    let cmp;
+    if(isklpSort==='name') cmp=a.name.localeCompare(b.name);
+    else if(isklpSort==='buy') cmp=(a.islBuy??-Infinity)-(b.islBuy??-Infinity);
+    else cmp=(a.islSell??-Infinity)-(b.islSell??-Infinity);
+    return isklpSortAsc?cmp:-cmp;
+  });
+
+  const fmtM=v=>v>=1e9?(v/1e9).toFixed(2)+'B':v>=1e6?(v/1e6).toFixed(2)+'M':v>0?Math.round(v).toLocaleString():'—';
+  const fmtR=v=>v!==null?Math.round(v).toLocaleString():'—';
+  const rStyle=v=>{
+    if(v===null)return'color:var(--text3)';
+    if(v>=2000)return'color:var(--accent3);font-weight:700';
+    if(v>=1000)return'color:var(--accent);font-weight:600';
+    if(v>0)return'color:var(--text2)';
+    return'color:var(--danger)';
+  };
+
+  tbody.innerHTML=computed.map((item,i)=>{
+    const extraTag=item.type==='bp'?'<span style="font-size:9px;color:var(--text3);margin-right:2px;">재료</span>'
+                  :item.type==='trade'?'<span style="font-size:9px;color:var(--text3);margin-right:2px;">기반</span>':'';
+    const extraDisp=item.extra>0?`${extraTag}${fmtM(item.extra)}`:'—';
+    return`<tr>
+      <td style="color:var(--text3);font-size:11px;">${i+1}</td>
+      <td>${item.name}</td>
+      <td class="num">${item.lp.toLocaleString()}</td>
+      <td class="num" style="color:var(--text2)">${fmtM(item.isk)}</td>
+      <td class="num" style="color:var(--text2)">${extraDisp}</td>
+      <td class="num" style="color:var(--accent3)">${fmtM(item.sellPx)}</td>
+      <td class="num" style="color:var(--accent2)">${fmtM(item.buyPx)}</td>
+      <td class="num" style="${rStyle(item.islSell)}">${fmtR(item.islSell)}</td>
+      <td class="num" style="${rStyle(item.islBuy)}">${fmtR(item.islBuy)}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function renderIskLp(){
+  const tbody=document.getElementById('isklp-tbody');
+  if(!tbody)return;
+  initIskLpGroups();
+  renderIskLpGroupBar();
+  tbody.innerHTML='<tr><td colspan="9" class="empty">가격 조회 중...</td></tr>';
+  const region=(document.getElementById('isklp-region')||{value:'10000002'}).value||'10000002';
+  const idSet=new Set();
+  ISK_LP_FACTIONS.forEach(fac=>fac.items.forEach(item=>{
+    if(item.type==='bp'){idSet.add(item.prod);item.mats.forEach(([t])=>idSet.add(t));}
+    else{idSet.add(item.typeId);if(item.type==='trade')idSet.add(item.base);}
+  }));
+  try{
+    const res=await fetch(`https://market.fuzzwork.co.uk/aggregates/?region=${region}&types=${[...idSet].join(',')}`);
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    window._iskLpPrices=await res.json();
+    renderIskLpTable(window._iskLpPrices);
+    const el=document.getElementById('isklp-last-update');
+    if(el)el.textContent='마지막 업데이트: '+new Date().toLocaleTimeString();
+  }catch(e){
+    tbody.innerHTML=`<tr><td colspan="9" class="empty">가격 조회 실패: ${e.message}</td></tr>`;
+    console.error('ISK/LP',e);
+  }
+}
+
 document.getElementById('journal-search').addEventListener('input',renderJournal);  
 document.getElementById('journal-type-filter').addEventListener('change',renderJournal);  
 document.getElementById('asset-search').addEventListener('input',()=>renderAssets());  
