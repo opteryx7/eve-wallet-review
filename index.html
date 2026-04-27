@@ -1,4 +1,4 @@
-<!DOCTYPE html>  <html lang="en">  
+﻿<!DOCTYPE html>  <html lang="en">  
 <head>  
 <meta charset="UTF-8">  
 <meta name="viewport" content="width=device-width, initial-scale=1.0">  
@@ -828,6 +828,12 @@ function isUsefulCharData(d){
     (d.assets&&d.assets.length)||(d.orders&&d.orders.length)||(d.contracts&&d.contracts.length)||  
     (d.journal&&d.journal.length)||(d.loyaltyPoints&&d.loyaltyPoints.length)||(d.standings&&d.standings.length));  
 }  
+function isEsiDataLoaded(d){  
+  if(!d)return false;  
+  return !!(d.walletBalance||d.totalLP||d.totalSP||  
+    (d.loyaltyPoints&&d.loyaltyPoints.length)||  
+    (d.assets&&d.assets.length)||(d.orders&&d.orders.length));  
+}  
 function destroyChart(id){if(charts[id]){charts[id].destroy();delete charts[id];}}  
 const SP_MIN=5000000; // 5M SP 이하 추출 불가  
 const TYPE_LARGE_INJECTOR=40520;  
@@ -953,14 +959,14 @@ function saveToken(t,storageKey){
 }  
   
 function saveCharSnapshot(idx,data){  
-  if(!isUsefulCharData(data))return false;  
-  saveCharSummary(idx,data);  
-  const snapshot={...data,journal:undefined};  
-  return setStoredJson(getSnapshotKey(idx),snapshot,true);  
+  if(!isEsiDataLoaded(data))return false;  
+  try{localStorage.removeItem(getSnapshotKey(idx));}catch(e){}  
+  try{localStorage.removeItem(SNAPSHOT_PFX+idx);}catch(e){}  
+  return saveCharSummary(idx,data);  
 }  
   
 function saveCharSummary(idx,data){  
-  if(!isUsefulCharData(data))return false;  
+  if(!isEsiDataLoaded(data))return false;  
   const summary={  
     walletBalance:data.walletBalance||0,  
     assetValue:data.assetValue||0,  
@@ -2608,11 +2614,12 @@ async function refreshAllChars(silent=false,reason='manual'){
     if(!t)continue;  
     try{  
       const loaded=await loadCharData(i,t);  
-      if(isUsefulCharData(loaded)||!isUsefulCharData(charDataCache[i])){  
+      if(isEsiDataLoaded(loaded)){  
+        charDataCache[i]=loaded;saveCharSnapshot(i,loaded);  
+      }else if(!isEsiDataLoaded(charDataCache[i])){  
         charDataCache[i]=loaded;  
-        if(isUsefulCharData(loaded))saveCharSnapshot(i,loaded);  
       }else{  
-        console.warn('Keeping existing cache for char',i,'because refreshed data looked empty.');  
+        console.warn('Keeping existing cache for char',i,'- ESI data appears empty, preserving cache');  
       }  
       if(silent)renderAll();  
     }catch(e){  
@@ -2648,11 +2655,12 @@ async function refreshCharAtIndex(idx,silent=false,reason='single'){
     const t=await getValidToken(idx);  
     if(!t)return;  
     const loaded=await loadCharData(idx,t);  
-    if(isUsefulCharData(loaded)||!isUsefulCharData(charDataCache[idx])){  
+    if(isEsiDataLoaded(loaded)){  
+      charDataCache[idx]=loaded;saveCharSnapshot(idx,loaded);  
+    }else if(!isEsiDataLoaded(charDataCache[idx])){  
       charDataCache[idx]=loaded;  
-      if(isUsefulCharData(loaded))saveCharSnapshot(idx,loaded);  
     }else{  
-      console.warn('Keeping existing cache for char',idx,'because refreshed data looked empty.');  
+      console.warn('Keeping existing cache for char',idx,'- ESI data appears empty, preserving cache');  
     }  
     lastSyncAt=Date.now();  
     renderAll();  
@@ -2682,9 +2690,12 @@ async function refreshCharBackground(idx){
     const t=await getValidToken(idx);  
     if(!t)return;  
     const loaded=await loadCharData(idx,t);  
-    if(isUsefulCharData(loaded)||!isUsefulCharData(charDataCache[idx])){  
+    if(isEsiDataLoaded(loaded)){  
+      charDataCache[idx]=loaded;saveCharSnapshot(idx,loaded);  
+    }else if(!isEsiDataLoaded(charDataCache[idx])){  
       charDataCache[idx]=loaded;  
-      if(isUsefulCharData(loaded))saveCharSnapshot(idx,loaded);  
+    }else{  
+      console.warn('Keeping existing cache for char',idx,'- ESI data appears empty, preserving cache');  
     }  
     lastSyncAt=Date.now();  
     renderAll();  
