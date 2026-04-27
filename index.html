@@ -3044,7 +3044,7 @@ function getIskLpCalc(item,prices,useMatBuy){
     sellPx=parseFloat((d.sell&&d.sell.min)||0);
     buyPx=parseFloat((d.buy&&d.buy.max)||0);
     const bd=prices[String(item.base)]||{};
-    extra=parseFloat((bd.sell&&bd.sell.min)||0);
+    extra=useMatBuy?parseFloat((bd.buy&&bd.buy.max)||0):parseFloat((bd.sell&&bd.sell.min)||0);
   } else {
     const d=prices[String(item.typeId)]||{};
     sellPx=parseFloat((d.sell&&d.sell.min)||0);
